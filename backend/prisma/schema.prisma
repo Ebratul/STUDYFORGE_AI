@@ -1,5 +1,7 @@
 // StudyForge AI — schema. Part 1: identity/platform. Part 2: AI credentials, conversations, documents, retrieval, jobs.
-// Later parts add their own models (questions, exams, groups, ...) via new migrations.
+// Part 3: generation runs, question bank (questions, options, CQ parts, model answers, sources, revisions, collections).
+// Part 4: exams (drafts, immutable published versions + snapshots), attempts, results, groups, invitations.
+// Later parts add their own models via new migrations.
 //
 // The rag_agent service reads/writes "Document" and "DocumentChunk" directly (see rag_agent/README.md);
 // keep column names stable or update its SQL.
@@ -47,17 +49,25 @@ model User {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  sessions      Session[]
-  accounts      Account[]
-  profile       UserProfile?
-  preference    UserPreference?
-  notifications Notification[]
-  auditEvents   AuditEvent[]
-  usageRecords  UsageRecord[]
-  credentials   ProviderCredential[]
-  modelPrefs    ModelPreference[]
-  conversations Conversation[]
-  documents     Document[]
+  sessions            Session[]
+  accounts            Account[]
+  profile             UserProfile?
+  preference          UserPreference?
+  notifications       Notification[]
+  auditEvents         AuditEvent[]
+  usageRecords        UsageRecord[]
+  credentials         ProviderCredential[]
+  modelPrefs          ModelPreference[]
+  conversations       Conversation[]
+  documents           Document[]
+  generationRuns      GenerationRun[]
+  questions           Question[]
+  questionCollections QuestionCollection[]
+  exams               Exam[]
+  examAttempts        ExamAttempt[]
+  examResults         ExamResult[]
+  ownedGroups         Group[]
+  groupMemberships    GroupMember[]
 
   @@index([role])
   @@index([createdAt])
@@ -156,7 +166,11 @@ model Notification {
   body      String
   readAt    DateTime?
   createdAt DateTime  @default(now())
+  // Part 4: in-app deep link and an idempotency key (the same event is never delivered twice to the same user).
+  link      String?
+  dedupeKey String?
 
+  @@unique([userId, dedupeKey])
   @@index([userId, readAt, createdAt(sort: Desc)])
 }
 
@@ -401,8 +415,9 @@ model Document {
   updatedAt         DateTime       @updatedAt
   processedAt       DateTime?
 
-  chunks        DocumentChunk[]
-  conversations ConversationDocument[]
+  chunks          DocumentChunk[]
+  conversations   ConversationDocument[]
+  questionSources QuestionSource[]
 
   @@unique([ownerId, sha256])
   @@index([ownerId, createdAt(sort: Desc)])
@@ -464,4 +479,543 @@ model Job {
   updatedAt   DateTime  @updatedAt
 
   @@index([status, runAt])
+}
+
+// ---------------------------------------------------------------------------
+// Part 3 — Question generation runs and the question bank (see docs/PART3_SPEC.md)
+// ---------------------------------------------------------------------------
+
+enum QuestionKind {
+  MCQ
+  CQ
+}
+
+enum QuestionDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionLanguage {
+  en
+  bn
+}
+
+enum QuestionOrigin {
+  AI_GENERATED
+  USER_AUTHORED
+}
+
+// SOURCE_QUOTED = at least one evidence quote was found verbatim in an authorised source (NOT a guarantee of correctness).
+enum SourceSupport {
+  SOURCE_QUOTED
+  MODEL_ONLY
+  NONE
+}
+
+enum CqLevel {
+  KNOWLEDGE
+  COMPREHENSION
+  APPLICATION
+  HIGHER_ORDER
+}
+
+enum AnswerBasis {
+  SOURCE_SUPPORTED
+  GENERAL_REASONING
+  INSUFFICIENT_EVIDENCE
+  USER_PROVIDED
+}
+
+enum RunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  INTERRUPTED
+}
+
+// A model-generated draft set. Expires (RUN_RETENTION_DAYS). `result` is the validated model output snapshot; the server derives
+// sources / source support / review flags for saved questions from it, so clients cannot forge them.
+model GenerationRun {
+  id               String       @id @default(cuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind             QuestionKind
+  status           RunStatus    @default(RUNNING)
+  settings         Json
+  provider         AiProvider
+  model            String
+  result           Json?
+  llmCalls         Int          @default(0)
+  promptTokens     Int?
+  completionTokens Int?
+  errorCode        String?
+  createdAt        DateTime     @default(now())
+  finishedAt       DateTime?
+  expiresAt        DateTime
+
+  questions Question[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+model Question {
+  id                 String             @id @default(cuid())
+  ownerId            String
+  owner              User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  kind               QuestionKind
+  schemaVersion      Int                @default(1)
+  // Increments on every content edit; each version has an immutable QuestionRevision (Part 4 exams pin (id, version)).
+  version            Int                @default(1)
+  language           QuestionLanguage
+  // MCQ: the question. CQ: lead-in (or the question itself for single-question descriptive CQs).
+  stem               String
+  stimulus           String?
+  explanation        String?
+  shortNote          String?
+  difficulty         QuestionDifficulty
+  subject            String?
+  topic              String?
+  tags               String[]           @default([])
+  marks              Float              @default(1)
+  negativeMarks      Float              @default(0)
+  origin             QuestionOrigin
+  sourceSupport      SourceSupport
+  modifiedByUser     Boolean            @default(false)
+  reviewReasons      String[]           @default([])
+  reviewedAt         DateTime?
+  // sha256 of the canonical normalised content; unique per owner (exact-duplicate guard).
+  contentHash        String
+  generationRunId    String?
+  generationRun      GenerationRun?     @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  // Copied from the run so provenance survives the run's expiry.
+  provenanceProvider String?
+  provenanceModel    String?
+  generatedAt        DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  options     QuestionOption[]
+  parts       QuestionPart[]
+  answers     ModelAnswer[]
+  sources     QuestionSource[]
+  revisions   QuestionRevision[]
+  collections CollectionQuestion[]
+
+  @@unique([ownerId, contentHash])
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@index([ownerId, kind, difficulty])
+  @@index([ownerId, subject])
+  @@index([ownerId, topic])
+  @@index([generationRunId])
+  @@index([tags], type: Gin)
+  @@index([stem(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// Stable id per option (kept across edits). Exactly one correct option per MCQ (partial unique index in the migration).
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position   Int
+  text       String
+  isCorrect  Boolean  @default(false)
+
+  @@unique([questionId, position])
+  @@index([questionId])
+}
+
+model QuestionPart {
+  id         String       @id @default(cuid())
+  questionId String
+  question   Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position   Int
+  label      String?
+  level      CqLevel?
+  prompt     String
+  marks      Float
+  answer     ModelAnswer?
+
+  @@unique([questionId, position])
+  @@index([questionId])
+}
+
+// A model/user answer for a CQ part (partId set) or for a part-less CQ (partId null; one per question via a partial unique index).
+model ModelAnswer {
+  id         String        @id @default(cuid())
+  questionId String
+  question   Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  partId     String?       @unique
+  part       QuestionPart? @relation(fields: [partId], references: [id], onDelete: Cascade)
+  text       String
+  basis      AnswerBasis
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  sources QuestionSource[]
+
+  @@index([questionId])
+}
+
+// Evidence snapshot: survives deletion of the document (documentId becomes NULL, name/quote remain).
+model QuestionSource {
+  id            String       @id @default(cuid())
+  questionId    String
+  question      Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answerId      String?
+  answer        ModelAnswer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  ordinal       Int
+  documentId    String?
+  document      Document?    @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  documentName  String
+  page          Int?
+  section       String?
+  quote         String
+  quoteVerified Boolean      @default(false)
+
+  @@index([questionId])
+  @@index([answerId])
+  @@index([documentId])
+}
+
+model QuestionRevision {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  version    Int
+  snapshot   Json
+  createdAt  DateTime @default(now())
+
+  @@unique([questionId, version])
+}
+
+// "Question sets": private, ordered groups. Membership is a relation, never a copy of the question.
+model QuestionCollection {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title       String
+  // Lower-cased/trimmed title: titles are unique per owner, case-insensitively.
+  titleKey    String
+  description String?
+  subject     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions CollectionQuestion[]
+
+  @@unique([ownerId, titleKey])
+  @@index([ownerId, updatedAt(sort: Desc)])
+}
+
+model CollectionQuestion {
+  collectionId String
+  collection   QuestionCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  questionId   String
+  question     Question           @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position     Int
+  addedAt      DateTime           @default(now())
+
+  @@id([collectionId, questionId])
+  @@index([questionId])
+  @@index([collectionId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Part 4 — Groups
+// ---------------------------------------------------------------------------
+
+enum GroupRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Group {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  capacity    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members GroupMember[]
+  invites GroupInvite[]
+  exams   Exam[]
+
+  @@index([ownerId])
+}
+
+model GroupMember {
+  groupId               String
+  group                 Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                  GroupRole @default(MEMBER)
+  joinedAt              DateTime  @default(now())
+  // Privacy: when false other members see "Anonymous participant" on leaderboards (the member always sees themself).
+  showNameOnLeaderboard Boolean   @default(true)
+
+  @@id([groupId, userId])
+  @@index([userId])
+}
+
+// The plaintext code is shown once at creation; only its SHA-256 is stored.
+model GroupInvite {
+  id          String    @id @default(cuid())
+  groupId     String
+  group       Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdById String
+  codeHash    String    @unique
+  codeHint    String // last 4 characters, for the owner's list
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  maxUses     Int
+  useCount    Int       @default(0)
+  // Set for direct (by e-mail address) invitations: only that user may use the code.
+  forUserId   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([groupId, createdAt(sort: Desc)])
+}
+
+// ---------------------------------------------------------------------------
+// Part 4 — Exams
+// ---------------------------------------------------------------------------
+
+enum ExamMode {
+  INDIVIDUAL
+  GROUP
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum ReviewPolicy {
+  NONE
+  CORRECTNESS
+  FULL
+}
+
+enum ReleaseMode {
+  IMMEDIATE
+  AFTER_CLOSE
+  AT_TIME
+}
+
+enum LateStart {
+  CAP_AT_CLOSE
+  FULL_TIME_ONLY
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  TIMED_OUT
+}
+
+enum QuestionOutcome {
+  CORRECT
+  INCORRECT
+  UNANSWERED
+}
+
+enum FeedbackBand {
+  EXCELLENT
+  GOOD
+  NEEDS_IMPROVEMENT
+  BAD
+  VERY_BAD
+}
+
+// The editable exam. `draft` is the Zod-validated configuration (see docs/PART4_SPEC.md §3). Publishing copies it into an immutable ExamVersion.
+model Exam {
+  id             String     @id @default(cuid())
+  ownerId        String
+  owner          User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  groupId        String?
+  group          Group?     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  mode           ExamMode
+  status         ExamStatus @default(DRAFT)
+  title          String
+  description    String?
+  draft          Json
+  currentVersion Int        @default(0)
+  publishedAt    DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  versions ExamVersion[]
+
+  @@index([ownerId, status, updatedAt(sort: Desc)])
+  @@index([groupId, status])
+}
+
+// Immutable (a trigger rejects UPDATE). Everything a participant is graded against lives here and in the snapshot tables.
+model ExamVersion {
+  id                 String       @id @default(cuid())
+  examId             String
+  exam               Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  version            Int
+  title              String
+  description        String?
+  mode               ExamMode
+  groupId            String? // copied, no FK: history survives group changes
+  durationSeconds    Int
+  attemptLimit       Int
+  opensAt            DateTime?
+  closesAt           DateTime?
+  shuffleQuestions   Boolean
+  shuffleOptions     Boolean
+  reviewPolicy       ReviewPolicy
+  releaseMode        ReleaseMode
+  releaseAt          DateTime?
+  lateStart          LateStart
+  lateJoinGroup      Boolean
+  leaderboardVisible Boolean
+  reminderMinutes    Int?
+  // Fraction of a question's marks deducted for a wrong answer, in 1/10000 (0 = no negative marking, 2500 = 0.25).
+  negativeMarkingBp  Int
+  questionCount      Int
+  totalCenti         Int // total marks x 100
+  snapshotHash       String
+  publishedById      String
+  publishedAt        DateTime     @default(now())
+
+  questions ExamQuestionSnapshot[]
+  attempts  ExamAttempt[]
+  state     ExamVersionState?
+
+  @@unique([examId, version])
+  @@index([groupId, publishedAt(sort: Desc)])
+  @@index([closesAt])
+}
+
+// Mutable bookkeeping next to the immutable version (so notification fan-out is idempotent and recoverable).
+model ExamVersionState {
+  examVersionId     String      @id
+  examVersion       ExamVersion @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
+  resultsNotifiedAt DateTime?
+  reminderSentAt    DateTime?
+  publishNotifiedAt DateTime?
+}
+
+model ExamQuestionSnapshot {
+  id                    String             @id @default(cuid())
+  examVersionId         String
+  examVersion           ExamVersion        @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
+  position              Int
+  // Provenance only (no FK): the bank question may later change or be deleted without affecting this snapshot.
+  sourceQuestionId      String?
+  sourceQuestionVersion Int
+  stem                  String
+  explanation           String?
+  shortNote             String?
+  topic                 String?
+  subject               String?
+  difficulty            QuestionDifficulty
+  language              QuestionLanguage
+  marksCenti            Int
+  negativeCenti         Int
+  sources               Json // evidence snapshots without document ids
+
+  options ExamOptionSnapshot[]
+  answers AttemptAnswer[]
+
+  @@unique([examVersionId, position])
+}
+
+model ExamOptionSnapshot {
+  id         String               @id @default(cuid())
+  questionId String
+  question   ExamQuestionSnapshot @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position   Int
+  text       String
+  isCorrect  Boolean
+
+  @@unique([questionId, position])
+}
+
+model ExamAttempt {
+  id            String        @id @default(cuid())
+  examVersionId String
+  examVersion   ExamVersion   @relation(fields: [examVersionId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attemptNo     Int
+  status        AttemptStatus @default(IN_PROGRESS)
+  // Server clock only. deadlineAt = min(startedAt + duration, closesAt).
+  startedAt     DateTime
+  deadlineAt    DateTime
+  submittedAt   DateTime? // manual submission time
+  finalizedAt   DateTime?
+  // Participant-specific, deterministic from the version (see PART4_SPEC §6); stored so it can never change mid-attempt.
+  questionOrder Json
+  optionOrder   Json
+  lastSavedAt   DateTime?
+  createdAt     DateTime      @default(now())
+
+  answers AttemptAnswer[]
+  result  ExamResult?
+
+  @@unique([examVersionId, userId, attemptNo])
+  @@index([status, deadlineAt])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model AttemptAnswer {
+  attemptId        String
+  attempt          ExamAttempt          @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  examQuestionId   String
+  question         ExamQuestionSnapshot @relation(fields: [examQuestionId], references: [id], onDelete: Cascade)
+  selectedOptionId String?
+  markedForReview  Boolean              @default(false)
+  // Client-supplied monotonically increasing counter per question: an older (delayed) autosave can never overwrite a newer one.
+  seq              Int                  @default(0)
+  updatedAt        DateTime             @default(now())
+
+  @@id([attemptId, examQuestionId])
+}
+
+// Immutable once written (a trigger rejects UPDATE). Computed only by the server from the snapshot and the stored answers.
+model ExamResult {
+  id              String       @id @default(cuid())
+  attemptId       String       @unique
+  attempt         ExamAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  examVersionId   String
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rawScoreCenti   Int // before clamping at zero
+  scoreCenti      Int
+  maxCenti        Int
+  percentBp       Int // percentage x 100, rounded half up (8750 = 87.50 %)
+  correctCount    Int
+  incorrectCount  Int
+  unansweredCount Int
+  band            FeedbackBand
+  finalizedAt     DateTime     @default(now())
+
+  items ExamResultItem[]
+
+  @@index([examVersionId, scoreCenti(sort: Desc)])
+  @@index([userId, finalizedAt(sort: Desc)])
+}
+
+model ExamResultItem {
+  resultId         String
+  result           ExamResult      @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  examQuestionId   String
+  selectedOptionId String?
+  outcome          QuestionOutcome
+  awardedCenti     Int
+
+  @@id([resultId, examQuestionId])
 }

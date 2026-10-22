@@ -75,6 +75,69 @@ export type ChatEvent =
     }
   | { event: "error"; data: { code: string; message: string; retryable?: boolean; retry_after_seconds?: number | null } };
 
+// --- Part 3: question generation (rag_agent/CONTRACT.md §9, docs/PART3_SPEC.md §7) ---
+
+export type GenerateKind = "mcq" | "cq";
+
+export type GenerateRequest = {
+  request_id: string;
+  user_id: string;
+  chat: Credentials & { params: { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null } };
+  embedding: Credentials | null;
+  context_tokens: number | null;
+  grounding: "SOURCE_ONLY" | "SOURCE_PREFERRED" | "GENERAL";
+  sources: { topic: string | null; pasted_text: string | null; document_ids: string[] };
+  spec: Record<string, unknown>;
+  avoid: string[];
+  cross_check: boolean;
+  limits: { batch_size: number; max_llm_calls: number; max_context_chars: number; timeout_seconds: number; max_regen_per_batch: number };
+};
+
+export type RagSource = {
+  document_id: string | null;
+  document_name: string;
+  chunk_id?: string | null;
+  page: number | null;
+  section: string | null;
+  quote: string;
+  quote_verified: boolean;
+};
+export type RagAnswer = { text: string; basis: string; sources?: RagSource[] };
+export type RagQuestion = {
+  id: string;
+  kind: "MCQ" | "CQ";
+  language: string;
+  stem: string;
+  stimulus: string | null;
+  options: { id: string; text: string }[];
+  correct_option_id: string | null;
+  parts: { id: string; label: string | null; level: string | null; prompt: string; marks: number; answer: RagAnswer | null }[];
+  answer: RagAnswer | null;
+  explanation: string | null;
+  short_note: string | null;
+  difficulty: string;
+  subject: string | null;
+  topic: string | null;
+  tags: string[];
+  marks: number;
+  negative_marks: number;
+  sources: RagSource[];
+  source_support: string;
+  review_reasons: string[];
+};
+export type GenerateResult = {
+  questions: RagQuestion[];
+  rejected: number;
+  warnings: { code: string; message: string }[];
+  usage: { prompt_tokens: number | null; completion_tokens: number | null; llm_calls: number };
+  sources_used?: { document_id: string | null; document_name: string }[];
+};
+export type GenerateEvent =
+  | { event: "meta"; data: { request_id?: string; provider?: string; model?: string; kind?: string } }
+  | { event: "status"; data: { stage: string; batch?: number; batches?: number } }
+  | { event: "result"; data: GenerateResult }
+  | { event: "error"; data: { code: string; message: string; retryable?: boolean; retry_after_seconds?: number | null; reason?: string } };
+
 export type IngestParams = {
   document_id: string;
   owner_id: string;
@@ -116,6 +179,7 @@ export interface RagAgentClient {
   listModels(provider: ProviderId, apiKey: string): Promise<ModelsResult>;
   ingest(params: IngestParams, file: Uint8Array, onProgress: (stage: string, progress: number) => void, signal?: AbortSignal): Promise<IngestResult>;
   chatStream(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent>;
+  generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal): AsyncGenerator<GenerateEvent>;
   ready(): Promise<boolean>;
 }
 
@@ -266,6 +330,26 @@ export class HttpRagAgentClient implements RagAgentClient {
     if (!res.ok || !res.body) throw await toError(res);
     for await (const block of lines(res.body, /\r?\n\r?\n/)) {
       const ev = parseSseBlock(block);
+      if (ev) yield ev;
+    }
+  }
+
+  async *generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal): AsyncGenerator<GenerateEvent> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.base}/v1/generate/${kind}`, {
+        method: "POST",
+        headers: this.headers({ "content-type": "application/json", accept: "text/event-stream", "x-request-id": body.request_id }),
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      throw unavailable();
+    }
+    if (!res.ok || !res.body) throw await toError(res);
+    for await (const block of lines(res.body, /\r?\n\r?\n/)) {
+      const ev = parseSseBlock(block) as unknown as GenerateEvent | null;
       if (ev) yield ev;
     }
   }

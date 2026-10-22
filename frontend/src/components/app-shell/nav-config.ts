@@ -25,8 +25,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/workspace", label: "Workspace", icon: "Sparkles", status: "ready", keywords: "home start" },
       { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", status: "ready", keywords: "overview progress" },
       { href: "/chat", label: "Conversation", icon: "MessagesSquare", status: "ready", keywords: "chat ai ask" },
-      { href: "/mcq", label: "MCQ Generator", icon: "ListChecks", status: "planned", part: 3, keywords: "multiple choice questions" },
-      { href: "/cq", label: "CQ Generator", icon: "PenLine", status: "planned", part: 3, keywords: "creative questions" },
+      { href: "/mcq", label: "MCQ Generator", icon: "ListChecks", status: "ready", keywords: "multiple choice questions" },
+      { href: "/cq", label: "CQ Generator", icon: "PenLine", status: "ready", keywords: "creative questions" },
     ],
   },
   {
@@ -34,9 +34,9 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Library & Practice",
     items: [
       { href: "/documents", label: "Documents", icon: "FileText", status: "ready", keywords: "upload pdf files" },
-      { href: "/question-bank", label: "Question Bank", icon: "BookOpenCheck", status: "planned", part: 3, keywords: "saved questions collections" },
-      { href: "/exams", label: "Exams", icon: "GraduationCap", status: "planned", part: 4, keywords: "history timed tests results" },
-      { href: "/groups", label: "Groups", icon: "Users", status: "planned", part: 5, keywords: "study group leaderboard" },
+      { href: "/question-bank", label: "Question Bank", icon: "BookOpenCheck", status: "ready", keywords: "saved questions collections" },
+      { href: "/exams", label: "Exams", icon: "GraduationCap", status: "ready", keywords: "history timed tests results" },
+      { href: "/groups", label: "Groups", icon: "Users", status: "ready", keywords: "study group leaderboard invite" },
     ],
   },
   {

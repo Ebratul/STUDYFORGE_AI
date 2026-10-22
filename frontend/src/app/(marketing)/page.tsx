@@ -4,11 +4,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 const FEATURES = [
-  { icon: MessagesSquare, title: "Grounded conversation", text: "Ask questions in general mode, or lock answers to your own documents with page-level sources — no silent guessing.", part: 3 },
-  { icon: ListChecks, title: "MCQ generation", text: "Validated multiple-choice questions with explanations and short notes, ready to edit and save.", part: 4 },
-  { icon: PenLine, title: "CQ generation", text: "Stimulus-based creative questions, including a Bangla CQ preset, with or without model answers.", part: 4 },
-  { icon: GraduationCap, title: "Timed exams", text: "Server-timed exams with autosave and deterministic scoring you can trust.", part: 5 },
-  { icon: Users, title: "Study groups", text: "Invite classmates, share an identical exam, and compare results on a leaderboard.", part: 6 },
+  { icon: MessagesSquare, title: "Grounded conversation", text: "Ask questions in general mode, or lock answers to your own documents with page-level sources — no silent guessing.", part: 2 },
+  { icon: ListChecks, title: "MCQ generation", text: "Validated multiple-choice questions with explanations and short notes, ready to edit and save.", part: 3 },
+  { icon: PenLine, title: "CQ generation", text: "Stimulus-based creative questions, including a Bangla CQ preset, with or without model answers.", part: 3 },
+  { icon: GraduationCap, title: "Timed exams", text: "Server-timed exams with autosave and deterministic scoring you can trust.", part: 4 },
+  { icon: Users, title: "Study groups", text: "Invite classmates, share an identical exam, and compare results on a leaderboard.", part: 4 },
   { icon: KeyRound, title: "Bring your own key", text: "Use OpenAI, OpenRouter or Groq with keys stored encrypted on the server.", part: 2 },
 ];
 

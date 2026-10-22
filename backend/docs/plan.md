@@ -264,14 +264,14 @@ Tests: file-signature tests (renamed `.exe` as `.pdf`, polyglot, zip-bomb DOCX, 
 ### Phase 4 — MCQ generation, validation, question bank, CQ generation
 **Requirements:** §10, §11, §12
 
-1. [ ] Zod `McqQuestionSchema` (stable option ids `A..`, `correctOptionId`, `explanation`, `shortNote`, `difficulty`, `tags[]`, `sources[]{documentId,chunkId,page,quote?}`).
-2. [ ] `McqGraph` (LangGraph): `plan(topic coverage, difficulty mix) → retrieve context (if docs) → generate batch (structured) → validate → [repair/regenerate failures, max 2 rounds] → dedupe → finalize`.
-3. [ ] Deterministic validator (never trusts LLM): exactly one correct id that exists; no duplicate/empty options (normalized compare); option count matches request; no "all of the above"-style ambiguity flags (configurable); stem length bounds; near-duplicate detection (normalized trigram/Jaccard + embedding similarity for same batch); language check; for grounded mode **verify the cited quote exists in the cited chunk text** and run an optional second-pass "answer-key verification" LLM call that must independently select the same option (mismatch → regenerate/flag `UNVERIFIED`). Validation report stored in `GenerationRun`.
-4. [ ] MCQ UI: input panel (topic / pasted text / docs, count, difficulty or mix, language en/bn, options per question, marks, negative marking, explanation & short-note toggles, grounding policy `strict | prefer | none`), live progress, preview cards with edit-in-place, delete, regenerate single question, bulk save to collection / question bank, validation badges.
-5. [ ] CQ: `CqSetSchema` with flexible structure: `{stimulus?, parts[{label, level?: knowledge|comprehension|application|higher-order, text, marks, modelAnswer?, sourceRefs?}]}`; Bangla stimulus-based preset (ক/খ/গ/ঘ with 1/2/3/4 marks) as one *preset*, plus free-form option. Mode A **questions only**, Mode B **with answers** where each answer tags statements as `source-supported` vs `additional-reasoning`. No timer anywhere in CQ flow.
-6. [ ] CQ UI: generate, edit, regenerate part/set, save, copy, print stylesheet, **PDF export** (server-side via `@react-pdf/renderer` or Playwright-less HTML→PDF; must embed Bangla font — verified by test rendering).
-7. [ ] Question bank: CRUD, collections, tags/subject/topic/difficulty filters, FTS search, pagination, version increment + `contentHash` on edit, import/export (JSON schema-validated; CSV for MCQ), ownership checks everywhere, "used in N exams" indicator (read-only snapshot link).
-8. [ ] Rate/cost guard: max questions per run, max tokens, chunk budget.
+1. [x] _(Part 3)_ Zod `McqQuestionSchema` (stable option ids `A..`, `correctOptionId`, `explanation`, `shortNote`, `difficulty`, `tags[]`, `sources[]{documentId,chunkId,page,quote?}`).
+2. [x] _(Part 3; batched, ≤2 regenerations per batch, MCQ and CQ graphs in `rag_agent/app/graphs/generation.py`)_ `McqGraph` (LangGraph): `plan(topic coverage, difficulty mix) → retrieve context (if docs) → generate batch (structured) → validate → [repair/regenerate failures, max 2 rounds] → dedupe → finalize`.
+3. [x] _(Part 3; rag_agent `app/generation/validate.py` + backend re-validation. Answer-key verification is an independent solver pass whose disagreement **flags** the question `SOLVER_DISAGREES` instead of regenerating)_ Deterministic validator (never trusts LLM): exactly one correct id that exists; no duplicate/empty options (normalized compare); option count matches request; no "all of the above"-style ambiguity flags (configurable); stem length bounds; near-duplicate detection (normalized trigram/Jaccard + embedding similarity for same batch); language check; for grounded mode **verify the cited quote exists in the cited chunk text** and run an optional second-pass "answer-key verification" LLM call that must independently select the same option (mismatch → regenerate/flag `UNVERIFIED`). Validation report stored in `GenerationRun`.
+4. [x] _(Part 3; grounding policy `SOURCE_ONLY | SOURCE_PREFERRED | GENERAL`)_ MCQ UI: input panel (topic / pasted text / docs, count, difficulty or mix, language en/bn, options per question, marks, negative marking, explanation & short-note toggles, grounding policy `strict | prefer | none`), live progress, preview cards with edit-in-place, delete, regenerate single question, bulk save to collection / question bank, validation badges.
+5. [x] _(Part 3; parts store the level and marks, answers carry a `basis`: source-supported / general reasoning / insufficient evidence / user-provided)_ CQ: `CqSetSchema` with flexible structure: `{stimulus?, parts[{label, level?: knowledge|comprehension|application|higher-order, text, marks, modelAnswer?, sourceRefs?}]}`; Bangla stimulus-based preset (ক/খ/গ/ঘ with 1/2/3/4 marks) as one *preset*, plus free-form option. Mode A **questions only**, Mode B **with answers** where each answer tags statements as `source-supported` vs `additional-reasoning`. No timer anywhere in CQ flow.
+6. [x] _(Part 3; server-side pdfkit + embedded Noto fonts, Bangla verified visually)_ CQ UI: generate, edit, regenerate part/set, save, copy, print stylesheet, **PDF export** (server-side via `@react-pdf/renderer` or Playwright-less HTML→PDF; must embed Bangla font — verified by test rendering).
+7. [~] _(Part 3: CRUD, collections, filters, trigram search, pagination, bulk actions, versions + `contentHash`, ownership, JSON/TXT/PDF export done. **Not built:** import, CSV export, "used in N exams" (needs Part 4), Postgres FTS — ILIKE + pg_trgm is used instead)_ Question bank: CRUD, collections, tags/subject/topic/difficulty filters, FTS search, pagination, version increment + `contentHash` on edit, import/export (JSON schema-validated; CSV for MCQ), ownership checks everywhere, "used in N exams" indicator (read-only snapshot link).
+8. [x] _(Part 3)_ Rate/cost guard: max questions per run, max tokens, chunk budget.
 
 Acceptance: generate 10 grounded MCQs from a doc → all pass validator or are flagged; malformed mock output is rejected/regenerated (test); edit & save to bank; CQ both modes; PDF with Bangla text renders.
 Tests: validator unit tests (≥25 malformed cases), graph tests with scripted mock provider (malformed → repair → success; repeated failure → bounded stop with clear error), grounded-quote verification test, bank authz tests, import schema tests.
@@ -424,12 +424,12 @@ Defaults if you don't reply: Better Auth, OpenAI embeddings, TS-only, OCR/video 
 
 ## 13. Progress Checklist (kept in sync with `CHECKLIST.md`)
 
-- [ ] Phase 1 — Foundation
-- [ ] Phase 2 — Providers & BYOK
-- [ ] Phase 3 — Storage, RAG, Conversation
-- [ ] Phase 4 — MCQ, CQ, Question Bank
-- [ ] Phase 5 — Exams & Analytics
-- [ ] Phase 6 — Groups & Leaderboards
+- [x] Phase 1 — Foundation (Part 1)
+- [x] Phase 2 — Providers & BYOK (Part 2; never run against a live provider)
+- [x] Phase 3 — Storage, RAG, Conversation (Part 2)
+- [~] Phase 4 — MCQ, CQ, Question Bank (Part 3; import / CSV / "used in N exams" outstanding — see IMPLEMENTATION_STATUS)
+- [x] Phase 5 — Exams & grading (Part 4; per-user analytics beyond result topics/dashboard summary deferred to Part 5)
+- [x] Phase 6 — Groups & Leaderboards (Part 4)
 - [ ] Phase 7 — AI Analysis, Admin, Observability
 - [ ] Phase 8 — Security, QA, Docs, Release
 

@@ -2,46 +2,44 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, PASSWORD, register, signOut, sql, test, uniqueEmail } from "./fixtures";
 
 test.describe("application shell and navigation", () => {
-  test("desktop shell: sidebar sections, honest 'Soon' labels and labelled placeholders", async ({ page }) => {
+  test("desktop shell: sidebar sections and no 'Soon' labels (every module exists in this build)", async ({ page }) => {
     await register(page);
     const nav = page.getByRole("navigation", { name: "Primary" });
     for (const label of ["Workspace", "Dashboard", "Conversation", "MCQ Generator", "CQ Generator", "Documents", "Question Bank", "Exams", "Groups", "Notifications", "Profile", "Privacy & account", "AI providers", "API keys"]) {
       await expect(nav.getByRole("link", { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) })).toBeVisible();
     }
-    // Planned modules advertise that they're unfinished.
-    for (const label of ["MCQ Generator", "CQ Generator", "Question Bank", "Exams", "Groups"]) {
-      await expect(nav.getByRole("link", { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) })).toContainText("Soon");
-    }
-    // Modules that exist in this build are not labelled "Soon".
-    for (const label of ["Conversation", "Documents", "AI providers", "API keys"]) {
+    // Every module in the sidebar is implemented now, so nothing is labelled "Soon".
+    for (const label of ["Conversation", "MCQ Generator", "CQ Generator", "Question Bank", "Documents", "Exams", "Groups", "AI providers", "API keys"]) {
       await expect(nav.getByRole("link", { name: new RegExp(`^${label}`) })).not.toContainText("Soon");
     }
     await expect(nav.getByRole("link", { name: /^Workspace/ })).not.toContainText("Soon");
     // Regular users never see the admin entry.
     await expect(nav.getByRole("link", { name: /Admin/ })).toHaveCount(0);
 
-    await nav.getByRole("link", { name: /^MCQ Generator/ }).click();
-    await expect(page).toHaveURL(/\/mcq$/);
-    await expect(page.getByText("Not implemented yet")).toBeVisible();
-    await expect(page.getByText(/Coming in Part 3/)).toBeVisible();
-    // Placeholders contain no inputs that could simulate an AI answer.
-    await expect(page.getByRole("main").getByRole("textbox")).toHaveCount(0);
-    await expect(page.getByRole("main").getByRole("button")).toHaveCount(0);
+    await nav.getByRole("link", { name: /^Exams/ }).click();
+    await expect(page).toHaveURL(/\/exams$/);
+    await expect(page.getByRole("heading", { name: "Exams", level: 1 })).toBeVisible();
+    await expect(page.getByRole("link", { name: "New exam" })).toBeVisible();
+    await expect(page.getByText("Not implemented yet")).toHaveCount(0);
   });
 
-  test("every placeholder route is labelled and authenticated", async ({ page }) => {
+  test("exams and groups are real, authenticated pages (no placeholders left)", async ({ page }) => {
     await register(page);
-    for (const path of ["/mcq", "/cq", "/question-bank", "/exams", "/groups"]) {
+    await page.goto("/exams");
+    await expect(page.getByRole("heading", { name: "Exams", level: 1 })).toBeVisible();
+    await page.goto("/groups");
+    await expect(page.getByRole("heading", { name: /groups/i, level: 1 })).toBeVisible();
+    for (const path of ["/exams", "/groups"]) {
       await page.goto(path);
-      await expect(page.getByText("Not implemented yet")).toBeVisible();
+      await expect(page.getByText("Not implemented yet")).toHaveCount(0);
     }
   });
 
   test("dashboard shows real account facts and no fabricated analytics", async ({ page }) => {
     await register(page);
     await page.goto("/dashboard");
-    await expect(page.getByText("No exam activity yet")).toBeVisible();
-    await expect(page.getByText("Planned analytics")).toBeVisible();
+    await expect(page.getByText("No exam results yet")).toBeVisible();
+    await expect(page.getByText("Planned analytics")).toHaveCount(0);
     await expect(page.getByText("Unread notifications")).toBeVisible();
   });
 
@@ -101,7 +99,7 @@ test.describe("application shell and navigation", () => {
 
   test("authenticated pages have no serious accessibility violations", async ({ page }) => {
     await register(page);
-    for (const path of ["/workspace", "/dashboard", "/notifications", "/settings/profile", "/settings/privacy", "/settings/api-keys", "/settings/providers", "/documents", "/chat", "/mcq"]) {
+    for (const path of ["/workspace", "/dashboard", "/notifications", "/settings/profile", "/settings/privacy", "/settings/api-keys", "/settings/providers", "/documents", "/chat", "/mcq", "/cq", "/question-bank"]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();

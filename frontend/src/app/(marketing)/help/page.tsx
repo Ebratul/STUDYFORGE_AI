@@ -12,7 +12,7 @@ export default function HelpPage() {
       <h2>I didn&apos;t get a verification or reset email</h2>
       <p>Check your spam folder. If the server operator has not configured email, these messages cannot be sent.</p>
       <h2>What can I do right now?</h2>
-      <p>Today you can create an account, manage your profile, preferences, sessions and data, and see where each upcoming module fits. Conversation, MCQ/CQ generation, documents, exams and groups are marked <em>Soon</em> in the sidebar and are not functional yet.</p>
+      <p>Today you can create an account, add your own AI provider key, upload documents, chat with sources, generate MCQs and CQs, keep them in a private question bank, and build and take timed multiple-choice exams (the server keeps the clock and does the marking). Anything marked <em>Soon</em> in the sidebar is not available yet.</p>
       <h2>How do I delete my account?</h2>
       <p>Go to Settings → Privacy &amp; account → Delete account.</p>
     </ProsePage>

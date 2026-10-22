@@ -2,7 +2,7 @@
 
 An AI study workspace: bring-your-own-key chat, document-grounded answers with sources, and (in later parts) MCQ/CQ practice, timed exams and study groups. English and Bangla.
 
-> **Status — Part 2 of 5.** Accounts/security (Part 1) plus AI providers (BYOK), conversations, document upload/processing and retrieval-augmented answers are implemented and tested. MCQ/CQ generation, question bank, exams and groups are **not built** and are labelled *Soon* in the UI. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for exactly what works, what was verified, and what was not.
+> **Status — Part 4 of 5.** Accounts/security (Part 1), AI providers (BYOK), conversations, document upload/processing and retrieval-augmented answers (Part 2), MCQ/CQ generation and the question bank (Part 3), and **timed exams, server-side grading, groups, invitations and leaderboards** (Part 4) are implemented and tested. AI result analysis and personalized recommendations (Part 5) are **not built**. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for exactly what works, what was verified, and what was not; Contracts: [docs/PART3_SPEC.md](docs/PART3_SPEC.md) (generation + bank) and [docs/PART4_SPEC.md](docs/PART4_SPEC.md) (exams, groups) and the schema is described in [docs/DATABASE.md](docs/DATABASE.md).
 
 ## Repository layout
 
@@ -46,7 +46,7 @@ openssl rand -base64 32   # CREDENTIAL_ENCRYPTION_KEY  (exactly 32 random bytes)
 openssl rand -hex 24      # RAG_AGENT_TOKEN  (same value in backend/.env.local and rag_agent/.env.local)
 ```
 
-Then in the app: **Settings → API keys** (add your own OpenAI / OpenRouter / Groq key and test it) → **Settings → AI providers** (pick a default chat model and an embedding model) → **Documents** (upload) → **Conversation**.
+Then in the app: **Settings → API keys** (add your own OpenAI / OpenRouter / Groq key and test it) → **Settings → AI providers** (pick a default chat model and an embedding model) → **Documents** (upload) → **Conversation**, or **MCQ Generator / CQ Generator** (from a topic, pasted text and/or documents; optional per-task models for `MCQ` and `CQ`) → review, edit and save into a collection in the **Question Bank**.
 
 To make yourself an admin: `cd backend && pnpm admin:grant you@example.com`.
 
@@ -62,8 +62,8 @@ Each service documents its own: [backend/.env.example](.env.example), `frontend/
 
 | Where | Command | What it covers |
 |---|---|---|
-| backend | `pnpm test` (needs Postgres; uses the `studyforge_test` database) | unit + integration: crypto, validation, auth, credentials, cross-user denial, documents, ingestion jobs, conversations/chat, queue |
-| rag_agent | `uv run pytest` (needs Postgres; uses `studyforge_rag_test`) | provider adapters (mocked HTTP), extraction, chunking, ingestion, retrieval isolation, LangGraph workflows |
+| backend | `pnpm test` (needs Postgres; uses the `studyforge_test` database) | unit + integration: crypto, validation, auth, credentials, cross-user denial, documents, ingestion jobs, conversations/chat, queue; **Part 3:** question schemas/validation, generation (mocked rag_agent), question bank, collections, exports; **Part 4:** grading/shuffle units, exam publication/snapshot immutability, attempts (injected server clock, concurrency races), results/release, groups, invites, leaderboard |
+| rag_agent | `uv run pytest` (needs Postgres; uses `studyforge_rag_test`) | provider adapters (mocked HTTP), extraction, chunking, ingestion, retrieval isolation, LangGraph workflows; **Part 3:** generation validators, MCQ/CQ graphs with the mock provider, `sample_chunks` isolation, SSE endpoints |
 | frontend | `pnpm test` | safe Markdown rendering, SSE parsing, validation |
 | frontend | `pnpm test:e2e` (needs Postgres + Mailpit; builds and starts all three services with the mock provider on :3100/:4100/:8200, database `studyforge_e2e`) | full browser flows incl. accessibility scans |
 
@@ -73,4 +73,4 @@ No test needs a paid provider call. Live OpenAI/OpenRouter/Groq behaviour is **u
 See [docs/PROJECT_ARCHITECTURE.md §5](docs/PROJECT_ARCHITECTURE.md). Headlines: keys encrypted at rest (AES-256-GCM) and never returned; server-side authorization with ownership in every query; retrieval filtered in SQL; document-only answers verified in code; Markdown rendering sanitised with images disabled; CSP nonce, HttpOnly cookies, rate limits, redacted logs. The backend and rag_agent must not be exposed publicly. The application has **not** been independently audited.
 
 ## Known limitations
-See the status doc. Notably: only text-based PDFs (no OCR), no video, one embedding model at a time (1536-d), email cannot be changed, stored files are not yet purged on account deletion, CI has not run on GitHub.
+See the status doc. Notably: only text-based PDFs (no OCR), no video, one embedding model at a time (1536-d), email cannot be changed, CI has not run on GitHub, and no live provider has ever been called — AI-generated questions are **not guaranteed correct** and are always shown as "review before use".

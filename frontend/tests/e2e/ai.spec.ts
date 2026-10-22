@@ -23,6 +23,8 @@ async function configureAi(page: Page, opts: { embedding?: boolean } = {}) {
 
 async function uploadText(page: Page, name: string, text: string) {
   await page.goto("/documents");
+  // The hidden file input is server-rendered before React attaches its change handler; wait for hydration or the selection is silently dropped.
+  await page.waitForLoadState("networkidle");
   await page.locator("#file-input").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(text) });
   const row = page.getByTestId(`doc-${name}`);
   await expect(row).toBeVisible();

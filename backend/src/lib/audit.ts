@@ -27,7 +27,27 @@ export type AuditAction =
   | "document.uploaded"
   | "document.deleted"
   | "document.downloaded"
-  | "conversation.deleted";
+  | "conversation.deleted"
+  | "questions.saved"
+  | "questions.deleted"
+  | "questions.bulk_deleted"
+  | "questions.exported"
+  | "generation.completed"
+  | "exam.created"
+  | "exam.published"
+  | "exam.cancelled"
+  | "exam.deleted"
+  | "attempt.started"
+  | "attempt.finalized"
+  | "group.created"
+  | "group.updated"
+  | "group.deleted"
+  | "group.member_joined"
+  | "group.member_left"
+  | "group.member_removed"
+  | "group.role_changed"
+  | "group.invite_created"
+  | "group.invite_revoked";
 
 /** One-way, keyed hash so audit rows can correlate abuse without storing raw IPs. */
 export function hashIp(ip: string | null | undefined): string | null {

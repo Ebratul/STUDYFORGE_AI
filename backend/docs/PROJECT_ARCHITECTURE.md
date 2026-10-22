@@ -1,6 +1,6 @@
-# StudyForge AI — Project Architecture (through Part 2)
+# StudyForge AI — Project Architecture (through Part 4)
 
-_Keep this file in sync with the code. Last verified: end of Part 2._
+_Keep this file in sync with the code. Last verified: end of Part 4. Normative contracts: [PART3_SPEC.md](PART3_SPEC.md) (generation + bank) and [PART4_SPEC.md](PART4_SPEC.md) (exams, attempts, grading, groups, leaderboards); the schema is described in [DATABASE.md](DATABASE.md)._
 
 ## 1. Shape of the system
 
@@ -10,7 +10,7 @@ The repository root contains exactly three folders (plus `.git`, `.github`, `.gi
 |---|---|---|
 | `frontend/` | Next.js 16 (App Router), React 19, Tailwind 4, shadcn/ui, TanStack Query | UI only. Calls the backend through a same-origin proxy. Holds **no** secrets and **no** database access. |
 | `backend/` | TypeScript, Hono on Node, Prisma 7 + PostgreSQL, Better Auth | System of record: authentication, authorization, BYOK credential encryption, conversations, documents, storage, job queue, usage quotas. Also holds the Prisma schema/migrations, local Docker infra and project docs. |
-| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector), retrieval, and the two grounded-chat workflows. |
+| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector), retrieval, the two grounded-chat workflows, and (Part 3) the bounded MCQ / CQ generation workflows. |
 
 ```
 Browser ──► frontend (Next.js :3000)
@@ -52,6 +52,10 @@ Why this split: the browser must never see the backend, the AI service or any pr
 | `modules/ai` | `credentials` (BYOK), `preferences` (default + per-task model, generation limits), `models` (per-credential cache of provider-reported models), `usage` (daily token/request quotas), `routes` |
 | `modules/documents` | upload validation (extension + MIME + magic bytes), limits (single source of truth), service (quota, dedupe, retry, delete, signed download), `storage/` (`local`, `s3`) |
 | `modules/conversations` | CRUD/search/paging, `chat.ts` (turn preparation, SSE, persistence, citations), routes |
+| `modules/questions` | **Part 3.** `schemas` (strict Zod: question input, generation settings, bodies), `content`/`provenance` (row ↔ DTO mapping; server-derived provenance), `service` (save/edit/list/bulk/revisions), `collections`, `generation` (runs, quotas, model/credential/document resolution, result re-validation, single-question regeneration), `export/` (JSON / TXT / PDF), `routes` (`/api/questions`, `/api/collections`, `/api/generation`, `/api/export`) |
+| `modules/exams` | **Part 4.** `schemas`/`limits` (strict Zod), `grading` (pure integer centi-mark grading, percentage, bands), `shuffle` (deterministic SHA-256 Fisher–Yates), `snapshot` (publish copy + hash + integrity), `eligibility`, `service` (drafts, preview, publish, cancel, duplicate, lists), `attempts` (start/resume under an advisory lock, autosave with `seq`, submit, the single row-locked `finalizeAttempt`), `results` (release-aware view; no key before release), `jobs` (`exam.expire`, `exam.sweep`, `exam.reminder`, `exam.release`), `lifecycle`, `release`/`bands` (pure) |
+| `modules/groups` | **Part 4.** groups, members and the roles matrix, hashed 128-bit invite codes, join (group row lock + capacity trigger + per-user/per-IP rate limits), group exam history, and the SQL leaderboard/participants endpoints (competition ranking, best attempt, privacy names) |
+| `lib/clock.ts` | the one source of "now" for every deadline/window/release decision (server clock; replaceable in tests) |
 | `modules/jobs` | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`, dedupe key as lock, backoff, stale-lock reaping), worker loop, `ingest` handler |
 | `clients/rag-agent.ts` | Typed HTTP client + SSE/NDJSON parsers for `rag_agent` |
 | `index.ts` | Server + in-process worker + graceful shutdown |
@@ -59,6 +63,8 @@ Why this split: the browser must never see the backend, the AI service or any pr
 The job worker runs inside the backend process by default (`JOB_WORKER_ENABLED`); it can be moved to its own process later because jobs live in Postgres.
 
 ## 4. Data model
+
+_Part 3 tables (generation runs, question bank, collections) are documented in [DATABASE.md](DATABASE.md)._
 
 Part 1 tables are unchanged (`User`, `Session`, `Account`, `Verification`, `RateLimit`, `UserProfile`, `UserPreference`, `Notification`, `AuditEvent`, `UsageRecord`, `RateLimitBucket`). Part 2 adds (migration `…_part2_ai_documents_chat`):
 
@@ -94,18 +100,46 @@ All Part 1 controls remain (see §5 of the earlier revision: session cookies, CS
 | **Markdown XSS / exfiltration** | `react-markdown` (no raw HTML) + `rehype-sanitize` allow-list, http/https/mailto links with `noopener noreferrer nofollow`, **images never rendered** | frontend unit tests + e2e |
 | **Observability** | Request ids end-to-end; LangSmith optional and **off by default**; when on, inputs/outputs are hidden unless explicitly opted in | rag_agent unit tests (config logic only; no live LangSmith) |
 
+### 5.1 Part 3 additions
+
+| Concern | Implementation | Verified by |
+|---|---|---|
+| **Provenance can't be forged** | Save/edit input has no fields for sources, source support, review flags, answer basis or model; the server derives them from the stored `GenerationRun` and marks content the user changed (`modifiedByUser`, answers → `USER_PROVIDED`) | integration `generation.test.ts` ("provenance comes from the run"), `questions.test.ts` |
+| **Generated output isn't trusted** | rag_agent validates; the backend re-validates every question with the same Zod rules, drops evidence that points at documents the request wasn't authorised to use, recomputes source support, enforces `SOURCE_ONLY` itself, strips answers in questions-only mode, removes duplicates and trims to the requested count | integration `generation.test.ts` |
+| **Server-side validation on every write** | One schema for generation results, save, edit and export-drafts: ≥2/≤6 options, unique normalised options, valid correct reference, size limits, marks arithmetic, tag limits, unknown keys rejected, atomic batch | unit `question-schemas.test.ts`, integration |
+| **Ownership** | Every query is scoped to the caller; foreign ids are 404 (or silently ignored in bulk/export); a DB trigger refuses cross-owner collection membership | integration `questions.test.ts`, `collections.test.ts`, `export.test.ts` |
+| **Bounded work** | Env-configurable caps on counts, input sizes, documents, provider calls per run, output tokens, run timeout, per-minute rate and daily AI quota; one running generation per user; abort cancels the provider call | integration `generation.test.ts` |
+| **Exports leak nothing** | Built from one explicitly constructed structure validated by a strict schema (export-local ids; no DB/document/run ids, owner, provider/model, review flags) | unit `export-*.test.ts`, integration `export.test.ts` |
+| **Prompt injection (generation)** | Same defences as chat: sources only in the delimited *user* turn, neutralised, no tools, citations/document names from the database, leak filter on outputs, SPEC block carries no secrets | rag_agent `test_generation_graph.py` |
+
+### 5.2 Part 4 additions
+
+| Concern | Implementation | Verified by |
+|---|---|---|
+| **Published content can't change** | `ExamVersion`/snapshots/results are immutable (DB triggers reject `UPDATE`); snapshot hash re-verified for the author; bank edits/deletes don't touch snapshots | integration `exams-drafts.test.ts` (raw SQL UPDATE rejected; tamper → `MISMATCH`) |
+| **Answer key never leaves early** | attempt/take/list/autosave payloads never select `isCorrect`, explanation, note or sources; results/review are gated by the release predicate evaluated per request | integration `exams-results.test.ts` (JSON scans over every pre-release payload; the same scans match after release, so they can fail) |
+| **Server-authoritative time** | `deadlineAt` stored absolute; every comparison uses `lib/clock.ts`; client sends only option ids and a `seq`; the browser countdown is `remainingMs` + monotonic elapsed | integration `exams-attempts.test.ts` (injected clock, spoofed client time ignored) |
+| **Race safety** | start: advisory lock + partial unique index + trigger; save/submit/expire: `SELECT … FOR UPDATE` on the attempt row; one `ExamResult` per attempt (unique) | integration: 8 concurrent starts → 1 attempt; 8 concurrent submits and a 10-way submit/save/expire/sweep race → exactly one result; removing the lock makes these tests fail |
+| **Recovery** | expiry job + self-rescheduling sweeper + lazy finalization on any read/write/leaderboard read; grading uses only answers stored ≤ deadline + grace, so results are identical whenever finalization runs | integration (worker-down recovery) |
+| **Groups** | roles matrix, one OWNER, capacity enforced by group-row lock *and* an advisory-locked trigger; invite codes are bearer secrets stored as hashes with generic failures and per-user/per-IP limits | integration `groups-*.test.ts` (12 parallel joins into 3 seats → exactly 3) |
+| **Leaderboard** | SQL over finalized results of current members; best attempt; `rank()` competition ranking; hidden until released; anonymised names; opaque entry ids | integration `groups-leaderboard.test.ts` |
+
 ## 6. Frontend layout (`frontend/src`)
 
 `app/(marketing)`, `app/(auth)`, `app/(app)/(main)` (workspace, dashboard, chat, documents, settings, placeholders), `app/(app)/admin`, `app/api/[...path]` (proxy), `components/{ui,app-shell,auth,account,ai,documents,chat,common}`, `lib/` (`api` client, `sse` reader, `server/backend` for server components, validation schemas). Server components never import database code; there is none in this package.
 
+Part 3 UI: `/mcq`, `/cq` (generation workspaces) and `/question-bank` (collections + searchable bank) share `components/questions/*` — source and settings fields, a review workspace (editable cards with stable draft ids, selection, regenerate, save-to-collection, copy, export, print), badges for source support / review reasons / answer basis, and a print layout scoped under `html.sf-printing`. Types and local (advisory) validation live in `lib/questions.ts`; the server remains the authority.
+
+Part 4 UI: `/exams` (mine / available / history), the exam wizard (`/exams/new`, `/exams/[id]/edit`), `/exams/[id]`, the focused exam screen `/attempts/[id]` (own `(exam)` layout on the mint canvas, no app shell), `/attempts/[id]/result` (server-computed score, band, topic chart, review), `/groups`, `/groups/[id]`, `/join[/code]`, and `/exams/[id]/leaderboard` (Recharts score-distribution chart with a text alternative). The UI renders server values only; it never computes scores, ranks or release state.
+
 Chat UI: conversation list (search, paging, rename/delete), per-conversation policy toggle (Documents only / General AI), document picker, model badge, streaming with Stop, regenerate/retry, copy, safe Markdown, citation popovers (verified-quote vs. excerpt), earlier-history paging, explicit empty/loading/error/rate-limit/quota/not-configured states.
 
-## 7. Extension points for Parts 3–5
+## 7. Extension points for Part 5
 
 | Need | Plug in |
 |---|---|
-| MCQ/CQ generation | New LangGraph workflows in `rag_agent/app/graphs`, reusing `Provider.generate_structured` and retrieval; backend module `modules/questions`; model prefs `MCQ`/`CQ` already stored |
-| Exams & analytics | New backend modules with the same ownership rules; `Notification`/`AuditEvent`/`UsageRecord` exist; mint `--exam-canvas` token reserved for the exam screen |
-| Groups | `authorize.ts` primitives + new membership checks; retrieval scope would be extended in the *backend* (document id resolution), not in prompts |
+| AI result analysis / recommendations | Read finalized `ExamResult`/`ExamResultItem` + snapshot topics (grading data is trustworthy and AI-free); call rag_agent with a new workflow; never let a model alter a score |
+| Group analytics beyond the leaderboard | New read-only SQL over `ExamResult` joined to current `GroupMember`s |
+| Email notifications | `notifyUsers` is the single delivery point; add a consent-gated channel there |
 | OCR / transcription | `rag_agent/app/ingest` already reports `NEEDS_OCR`; video limits are centralised in `modules/documents/limits.ts` |
 | Localisation | `UserPreference.locale` stored; use cookie-based locale so routes never move |

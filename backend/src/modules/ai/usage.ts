@@ -38,12 +38,12 @@ export async function assertWithinQuota(user: SessionUser): Promise<void> {
     throw new AppError("QUOTA_EXCEEDED", "You've reached today's AI token limit. It resets at midnight UTC.", { resetsAt: u.resetsAt });
 }
 
-export async function recordUsage(userId: string, input: { provider: string; model: string; task: string; promptTokens?: number | null; completionTokens?: number | null }) {
+export async function recordUsage(userId: string, input: { provider: string; model: string; task: string; promptTokens?: number | null; completionTokens?: number | null; /** provider calls made (default 1) */ requests?: number }) {
   const total = (input.promptTokens ?? 0) + (input.completionTokens ?? 0);
   const metadata = { provider: input.provider, model: input.model, task: input.task, promptTokens: input.promptTokens ?? null, completionTokens: input.completionTokens ?? null };
   await db.usageRecord.createMany({
     data: [
-      { userId, category: "llm.requests", quantity: 1n, metadata },
+      { userId, category: "llm.requests", quantity: BigInt(Math.max(1, input.requests ?? 1)), metadata },
       ...(total > 0 ? [{ userId, category: "llm.tokens", quantity: BigInt(total), metadata }] : []),
     ],
   });

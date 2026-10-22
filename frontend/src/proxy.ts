@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 const PROTECTED_PREFIXES = [
   "/workspace", "/dashboard", "/chat", "/mcq", "/cq", "/documents", "/question-bank",
-  "/exams", "/groups", "/notifications", "/settings", "/admin",
+  "/exams", "/attempts", "/groups", "/join", "/notifications", "/settings", "/admin",
 ];
 const SESSION_COOKIES = ["studyforge.session_token", "__Secure-studyforge.session_token"];
 

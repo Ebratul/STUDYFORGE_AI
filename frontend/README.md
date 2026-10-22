@@ -11,3 +11,7 @@ pnpm test:e2e                  # starts rag_agent + backend + this app against a
 ```
 
 Project overview, architecture and security model: [`../backend/README.md`](../backend/README.md) and [`../backend/docs/`](../backend/docs/).
+
+## Part 3 screens (`/mcq`, `/cq`, `/question-bank`)
+
+Components live in `src/components/questions/` (generators, review/edit list, save/export dialogs, print layout) and `src/components/questions/bank/`; types, labels and instant local validation are in `src/lib/questions.ts`. The UI sends only question *content* to the server — sources, source-support, review flags and answer basis are set by the backend (see `../backend/docs/PART3_SPEC.md`). Local validation is for feedback only; the server validates every save, edit and export. Printing uses a portal plus `@media print` rules scoped to `html.sf-printing` in `globals.css`.

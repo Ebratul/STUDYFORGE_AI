@@ -9,6 +9,10 @@ import { accountRoutes } from "./modules/account/routes.js";
 import { aiRoutes } from "./modules/ai/routes.js";
 import { conversationRoutes } from "./modules/conversations/routes.js";
 import { documentRoutes } from "./modules/documents/routes.js";
+import { attemptRoutes, examRoutes } from "./modules/exams/routes.js";
+import { groupRoutes } from "./modules/groups/routes.js";
+import { leaderboardRoutes } from "./modules/groups/leaderboard-routes.js";
+import { collectionRoutes, exportRoutes, generationRoutes, questionRoutes } from "./modules/questions/routes.js";
 import type { Storage } from "./modules/documents/storage/types.js";
 
 export type Deps = { rag: RagAgentClient; storage: Storage };
@@ -44,5 +48,13 @@ export function createApp(deps: Deps) {
   app.route("/api/ai", aiRoutes(deps.rag));
   app.route("/api/conversations", conversationRoutes(deps.rag));
   app.route("/api/documents", documentRoutes(deps.storage));
+  app.route("/api/questions", questionRoutes());
+  app.route("/api/collections", collectionRoutes());
+  app.route("/api/generation", generationRoutes(deps.rag));
+  app.route("/api/export", exportRoutes());
+  app.route("/api/exams", examRoutes());
+  app.route("/api/exams", leaderboardRoutes());
+  app.route("/api/attempts", attemptRoutes());
+  app.route("/api/groups", groupRoutes());
   return app;
 }

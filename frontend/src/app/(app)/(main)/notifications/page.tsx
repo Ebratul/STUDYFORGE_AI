@@ -9,7 +9,7 @@ export const metadata: Metadata = { title: "Notifications" };
 
 export default async function NotificationsPage() {
   await requireMe("/notifications");
-  const { items } = await backendJson<{ items: { id: string; title: string; body: string; read: boolean; createdAt: string }[] }>("/api/notifications");
+  const { items } = await backendJson<{ items: { id: string; title: string; body: string; link?: string | null; read: boolean; createdAt: string }[] }>("/api/notifications");
   return (
     <>
       <PageHeader title="Notifications" description="Account and activity updates." />

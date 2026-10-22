@@ -1,7 +1,8 @@
 import type {
-  ChatEvent, ChatRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, TestResult,
+  ChatEvent, ChatRequest, GenerateEvent, GenerateKind, GenerateRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, TestResult,
 } from "../../src/clients/rag-agent.js";
 import { RagAgentError } from "../../src/clients/rag-agent.js";
+import { defaultGenerateScript } from "./fake-generation.js";
 
 export const CATALOG: ProviderCatalogEntry[] = [
   { id: "openai", name: "OpenAI", capabilities: { chat: true, embeddings: true, streaming: true, structured_output: "model-dependent" } },
@@ -14,6 +15,7 @@ export const CATALOG: ProviderCatalogEntry[] = [
 export class FakeRag implements RagAgentClient {
   testCalls: { provider: ProviderId; apiKey: string }[] = [];
   chatCalls: ChatRequest[] = [];
+  generateCalls: { kind: GenerateKind; body: GenerateRequest }[] = [];
   ingestCalls: { params: IngestParams; bytes: number }[] = [];
   modelCalls = 0;
 
@@ -57,6 +59,12 @@ export class FakeRag implements RagAgentClient {
   chatStream(body: ChatRequest, signal?: AbortSignal) {
     this.chatCalls.push(body);
     return this.chatScript(body, signal);
+  }
+  /** Default script: a deterministic result built from the request (see tests/helpers/fake-generation.ts). */
+  generateScript: (kind: GenerateKind, req: GenerateRequest, signal?: AbortSignal) => AsyncGenerator<GenerateEvent> = defaultGenerateScript;
+  generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal) {
+    this.generateCalls.push({ kind, body });
+    return this.generateScript(kind, body, signal);
   }
   async ready() {
     return this.available;

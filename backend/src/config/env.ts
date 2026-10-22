@@ -64,6 +64,45 @@ const schema = z.object({
   RETRIEVAL_MIN_SIMILARITY: z.coerce.number().min(0).max(1).default(0.3),
   RETRIEVAL_MAX_CONTEXT_CHARS: int(12_000, 500),
 
+  // --- question generation + bank (Part 3; see docs/PART3_SPEC.md §2) ---
+  MCQ_MAX_QUESTIONS_PER_RUN: int(50, 1),
+  CQ_MAX_QUESTIONS_PER_RUN: int(20, 1),
+  GEN_TOPIC_MAX_CHARS: int(300, 20),
+  GEN_TEXT_MAX_CHARS: int(30_000, 500),
+  GEN_MAX_DOCUMENTS: int(10, 1),
+  GEN_MAX_CONTEXT_CHARS: int(14_000, 1000),
+  GEN_BATCH_SIZE_MCQ: int(10, 1),
+  GEN_BATCH_SIZE_CQ: int(4, 1),
+  GEN_MAX_LLM_CALLS: int(16, 1),
+  GEN_MAX_OUTPUT_TOKENS: int(8000, 256),
+  GEN_TIMEOUT_MS: int(240_000, 5000),
+  GEN_RATE_PER_MINUTE: int(6, 1),
+  QUESTION_MAX_PER_USER: int(5000, 1),
+  COLLECTION_MAX_PER_USER: int(100, 1),
+  COLLECTION_MAX_QUESTIONS: int(500, 1),
+  SAVE_BATCH_MAX: int(100, 1),
+  RUN_RETENTION_DAYS: int(14, 1),
+
+  // --- exams and groups (Part 4; see docs/PART4_SPEC.md §2) ---
+  EXAM_MAX_QUESTIONS: int(200, 1),
+  EXAM_MAX_DURATION_MINUTES: int(360, 1),
+  EXAM_MAX_ATTEMPT_LIMIT: int(10, 1),
+  EXAM_MAX_DRAFTS_PER_USER: int(100, 1),
+  /** Network-latency allowance: a save/submit received up to this long after the deadline is still accepted. The deadline itself never moves. */
+  EXAM_GRACE_SECONDS: int(5, 0),
+  EXAM_SWEEP_INTERVAL_SECONDS: int(60, 5),
+  GROUP_MAX_OWNED_PER_USER: int(20, 1),
+  GROUP_MAX_MEMBERSHIPS_PER_USER: int(50, 1),
+  GROUP_MAX_CAPACITY: int(500, 2),
+  GROUP_DEFAULT_CAPACITY: int(30, 2),
+  INVITE_DEFAULT_TTL_HOURS: int(168, 1),
+  INVITE_MAX_TTL_HOURS: int(720, 1),
+  INVITE_MAX_USES: int(500, 1),
+  INVITE_MAX_ACTIVE_PER_GROUP: int(20, 1),
+  /** Invite-code guesses allowed per user and per IP per hour (codes carry 128 bits of entropy; this is defence in depth). */
+  INVITE_ATTEMPTS_PER_HOUR_USER: int(20, 1),
+  INVITE_ATTEMPTS_PER_HOUR_IP: int(60, 1),
+
   // --- background jobs ---
   JOB_WORKER_ENABLED: z.enum(["true", "false", "1", "0"]).default("true").transform((v) => v === "true" || v === "1"),
   JOB_POLL_INTERVAL_MS: int(1000, 50),

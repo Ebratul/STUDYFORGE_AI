@@ -6,6 +6,7 @@ import { requireAuth, requirePermissionMw } from "../../http/middleware.js";
 import type { AppEnv } from "../../http/context.js";
 import { parseWith, readJson } from "../../http/body.js";
 import { daysAgo } from "../../lib/dates.js";
+import { dashboardExams } from "../exams/service.js";
 import { countUnread, listNotifications, markAllRead, markRead } from "./notifications.js";
 import { getProfileBundle, updatePreferences, updateProfile } from "./profile.js";
 import { listSessions, revokeOtherSessions, revokeSession } from "./sessions.js";
@@ -65,7 +66,7 @@ accountRoutes.patch("/preferences", async (c) => {
 accountRoutes.get("/notifications", async (c) => {
   const items = await listNotifications(c.get("user"));
   return c.json({
-    items: items.map((n) => ({ id: n.id, type: n.type, title: n.title, body: n.body, read: Boolean(n.readAt), createdAt: n.createdAt.toISOString() })),
+    items: items.map((n) => ({ id: n.id, type: n.type, title: n.title, body: n.body, link: n.link, read: Boolean(n.readAt), createdAt: n.createdAt.toISOString() })),
   });
 });
 
@@ -155,7 +156,7 @@ accountRoutes.get("/admin/overview", requirePermissionMw("admin:dashboard:view")
   });
 });
 
-// Real, per-user counts for the dashboard (no study analytics yet: exams arrive in a later part).
+// Real, per-user counts for the dashboard (exam figures include released results only).
 accountRoutes.get("/dashboard/summary", async (c) => {
   const user = c.get("user");
   const [unread, sessions, credentials, docsByStatus, docBytes, conversations, userMessages, usage, prefs] = await Promise.all([
@@ -180,5 +181,6 @@ accountRoutes.get("/dashboard/summary", async (c) => {
     conversations,
     questionsAsked: userMessages,
     usage,
+    exams: await dashboardExams(user),
   });
 });

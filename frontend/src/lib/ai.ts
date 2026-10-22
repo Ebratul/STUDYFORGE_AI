@@ -70,7 +70,7 @@ export function describeProviderCode(code: string | null | undefined): string {
 export const TASK_LABEL: Record<TaskId, { title: string; hint: string; available: boolean }> = {
   CHAT: { title: "Conversation", hint: "Used for chat. Falls back to your default model.", available: true },
   EMBEDDING: { title: "Embeddings (documents)", hint: "Used to index and search your documents. Required for document-only chat.", available: true },
-  MCQ: { title: "MCQ generation", hint: "Stored now; used when MCQ generation ships.", available: false },
-  CQ: { title: "CQ generation", hint: "Stored now; used when CQ generation ships.", available: false },
+  MCQ: { title: "MCQ generation", hint: "Used to write multiple-choice questions. Falls back to your default model.", available: true },
+  CQ: { title: "CQ generation", hint: "Used to write CQs and model answers. Falls back to your default model.", available: true },
   ANALYSIS: { title: "Result analysis", hint: "Stored now; used when exam analysis ships.", available: false },
 };

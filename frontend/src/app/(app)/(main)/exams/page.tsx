@@ -1,19 +1,23 @@
 import type { Metadata } from "next";
-import { GraduationCap } from "lucide-react";
-import { PlaceholderPage } from "@/components/common/placeholder-page";
+import Link from "next/link";
+import { Plus } from "lucide-react";
+import { ExamList } from "@/components/exams/exam-list";
+import { PageHeader } from "@/components/common/page-header";
+import { Button } from "@/components/ui/button";
 import { requireMe } from "@/lib/server/backend";
 
 export const metadata: Metadata = { title: "Exams" };
 
-export default async function Page() {
+export default async function ExamsPage() {
   await requireMe("/exams");
   return (
-    <PlaceholderPage
-      title="Exams"
-      description="Build and take timed exams, then review your results."
-      icon={GraduationCap}
-      part={4}
-      planned={["Server-authoritative timer, autosave and idempotent submission", "Deterministic scoring with negative marking", "Result bands and answer review according to the release policy", "Attempt history and score trends"]}
-    />
+    <>
+      <PageHeader
+        title="Exams"
+        description="Build timed multiple-choice exams from your question bank, take them, and review your results. The server keeps the clock and does the marking."
+        actions={<Button asChild className="rounded-xl"><Link href="/exams/new"><Plus aria-hidden /> New exam</Link></Button>}
+      />
+      <ExamList />
+    </>
   );
 }

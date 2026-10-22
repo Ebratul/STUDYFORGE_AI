@@ -44,3 +44,19 @@ export async function markAllRead(user: SessionUser) {
   });
   return count;
 }
+
+export type NotifyInput = { type: string; title: string; body: string; link?: string; dedupeKey?: string };
+
+/**
+ * Creates in-app notifications. When `dedupeKey` is given it is unique per user, so the same event is never delivered twice
+ * (retries, duplicate jobs and sweeper overlap are all safe). Returns how many were actually created. In-app only: no e-mail is sent.
+ */
+export async function notifyUsers(userIds: string[], input: NotifyInput): Promise<number> {
+  const unique = [...new Set(userIds)];
+  if (!unique.length) return 0;
+  const { count } = await db.notification.createMany({
+    data: unique.map((userId) => ({ userId, type: input.type, title: input.title, body: input.body, link: input.link ?? null, dedupeKey: input.dedupeKey ? `${input.dedupeKey}:${userId}` : null })),
+    skipDuplicates: true,
+  });
+  return count;
+}

@@ -198,3 +198,23 @@
     height: 1px;
   }
 }
+
+/* ---- Printable question sets (see components/questions/printable.tsx) ---- */
+.sf-print-portal { display: none; }
+@media print {
+  html.sf-printing body > *:not(.sf-print-portal) { display: none !important; }
+  html.sf-printing .sf-print-portal { display: block; background: #fff; color: #000; font-size: 11.5pt; line-height: 1.45; }
+  html.sf-printing .sf-print-head h1 { font-size: 18pt; margin: 0 0 4pt; }
+  html.sf-printing .sf-print-head p { margin: 0; font-size: 10pt; color: #333; }
+  html.sf-printing .sf-print-note { font-style: italic; margin-bottom: 12pt !important; }
+  html.sf-printing .sf-print-list, html.sf-printing .sf-options, html.sf-printing .sf-key ol { list-style: none; padding: 0; margin: 0; }
+  html.sf-printing .sf-q { break-inside: avoid; margin: 0 0 14pt; }
+  html.sf-printing .sf-q blockquote { margin: 0 0 6pt; padding: 4pt 8pt; border-left: 3pt solid #999; }
+  html.sf-printing .sf-q-marks { color: #444; font-size: 10pt; }
+  html.sf-printing .sf-options { margin: 4pt 0 0 14pt; }
+  html.sf-printing .sf-options li { margin: 2pt 0; }
+  html.sf-printing .sf-answer { margin: 2pt 0 0; font-size: 10.5pt; color: #222; }
+  html.sf-printing .sf-key { break-before: page; }
+  html.sf-printing .sf-key h2 { font-size: 14pt; }
+  @page { margin: 16mm; }
+}

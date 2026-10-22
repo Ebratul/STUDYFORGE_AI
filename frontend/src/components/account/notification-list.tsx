@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { apiSend } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Item = { id: string; title: string; body: string; read: boolean; createdAt: string };
+type Item = { id: string; title: string; body: string; link?: string | null; read: boolean; createdAt: string };
 
 export function NotificationList({ items }: { items: Item[] }) {
   const router = useRouter();
@@ -42,6 +43,11 @@ export function NotificationList({ items }: { items: Item[] }) {
               <p className="text-sm font-semibold">{n.title}{!n.read && <span className="sr-only"> (unread)</span>}</p>
               <p className="mt-0.5 text-sm text-muted-foreground">{n.body}</p>
               <time className="mt-1 block text-xs text-muted-foreground" dateTime={n.createdAt}>{new Date(n.createdAt).toLocaleString()}</time>
+              {n.link && n.link.startsWith("/") && !n.link.startsWith("//") && (
+                <Link href={n.link} className="mt-1 inline-block text-sm font-medium text-primary underline-offset-2 hover:underline" onClick={() => { if (!n.read) void apiSend("POST", `/api/notifications/${n.id}/read`).catch(() => undefined); }}>
+                  Open<span className="sr-only"> “{n.title}”</span>
+                </Link>
+              )}
             </div>
             {!n.read && (
               <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => apiSend("POST", `/api/notifications/${n.id}/read`))}>Mark read</Button>
