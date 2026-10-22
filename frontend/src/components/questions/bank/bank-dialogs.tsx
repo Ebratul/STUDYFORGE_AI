@@ -10,16 +10,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiGet } from "@/lib/api";
 import type { CollectionView, Limits, Page } from "@/lib/questions";
 import { Field } from "../fields";
+import { useT } from "@/lib/i18n/client";
 
 export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, pending, onConfirm }: {
   open: boolean; onOpenChange: (o: boolean) => void; title: string; description: string; confirmLabel: string; pending?: boolean; onConfirm: () => void;
 }) {
+  const t = useT();
   return (
     <Dialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
       <DialogContent>
         <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
         <DialogFooter>
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={pending}>Cancel</Button>
+          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={pending}>{t("Cancel")}</Button>
           <Button variant="destructive" className="rounded-xl" onClick={onConfirm} disabled={pending}>{pending && <Loader2 className="animate-spin" aria-hidden />} {confirmLabel}</Button>
         </DialogFooter>
       </DialogContent>

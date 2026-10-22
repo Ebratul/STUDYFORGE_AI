@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { describeProviderCode, STATUS_LABEL, type CredentialStatus, type ProviderInfo, type ProvidersResponse } from "@/lib/ai";
 import { KeyDialog } from "./key-dialog";
+import { useI18n } from "@/lib/i18n/client";
 
 const STATUS_STYLE: Record<CredentialStatus, string> = {
   UNTESTED: "bg-muted text-muted-foreground",
@@ -20,6 +21,7 @@ const STATUS_STYLE: Record<CredentialStatus, string> = {
 };
 
 export function ApiKeysManager({ initial }: { initial: ProvidersResponse }) {
+  const { t, format } = useI18n();
   const qc = useQueryClient();
   const { data, isError, refetch } = useQuery({ queryKey: ["ai", "providers"], queryFn: () => apiGet<ProvidersResponse>("/api/ai/providers"), initialData: initial });
   const [editing, setEditing] = useState<ProviderInfo | null>(null);
@@ -31,27 +33,27 @@ export function ApiKeysManager({ initial }: { initial: ProvidersResponse }) {
   const test = useMutation({
     mutationFn: (p: ProviderInfo) => apiSend<{ ok: boolean; code?: string; modelsCount?: number }>("POST", `/api/ai/credentials/${p.id}/test`),
     onSuccess: (r, p) => {
-      if (r.ok) toast.success(`${p.name} connection works${r.modelsCount != null ? ` (${r.modelsCount} models)` : ""}`);
-      else toast.error(describeProviderCode(r.code));
+      if (r.ok) toast.success(r.modelsCount != null ? t("{name} connection works ({count} models)", { name: p.name, count: r.modelsCount }) : t("{name} connection works", { name: p.name }));
+      else toast.error(describeProviderCode(r.code, t));
       refresh();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Couldn't run the test."),
+    onError: (err) => toast.error(err instanceof ApiError ? t(err.message) : t("Couldn't run the test.")),
   });
 
   const remove = useMutation({
     mutationFn: (p: ProviderInfo) => apiSend("DELETE", `/api/ai/credentials/${p.id}`),
     onSuccess: (_r, p) => {
-      toast.success(`${p.name} key deleted`);
+      toast.success(t("{name} key deleted", { name: p.name }));
       setDeleting(null);
       refresh();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Couldn't delete the key."),
+    onError: (err) => toast.error(err instanceof ApiError ? t(err.message) : t("Couldn't delete the key.")),
   });
 
   if (isError) {
     return (
       <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-sm">
-        Couldn&apos;t load providers. <Button variant="link" className="h-auto p-0" onClick={() => refetch()}>Try again</Button>
+        {t("Couldn't load providers.")} <Button variant="link" className="h-auto p-0" onClick={() => refetch()}>{t("Try again")}</Button>
       </div>
     );
   }
@@ -61,7 +63,7 @@ export function ApiKeysManager({ initial }: { initial: ProvidersResponse }) {
       <div className="mb-6 flex items-start gap-3 rounded-2xl border bg-card p-4 text-sm shadow-card">
         <ShieldCheck className="mt-0.5 size-5 shrink-0 text-success" aria-hidden />
         <p className="text-muted-foreground">
-          <strong className="text-foreground">Bring your own key.</strong> Keys are encrypted on the server (AES-256-GCM) and only used for your own requests. They are never sent to your browser after you save them, never logged, and never shared with another user or provider. Usage is billed by the provider to your account.
+          <strong className="text-foreground">{t("Bring your own key.")}</strong> {t("Keys are encrypted on the server (AES-256-GCM) and only used for your own requests. They are never sent to your browser after you save them, never logged, and never shared with another user or provider. Usage is billed by the provider to your account.")}
         </p>
       </div>
 
@@ -75,36 +77,36 @@ export function ApiKeysManager({ initial }: { initial: ProvidersResponse }) {
                   <div>
                     <CardTitle className="flex items-center gap-2 text-base"><KeyRound className="size-4 text-primary" aria-hidden /> {p.name}</CardTitle>
                     <CardDescription className="mt-1">
-                      {p.capabilities.embeddings ? "Chat and embeddings" : "Chat only (no embeddings)"}
+                      {p.capabilities.embeddings ? t("Chat and embeddings") : t("Chat only (no embeddings)")}
                     </CardDescription>
                   </div>
-                  <Badge className={`rounded-full ${c ? STATUS_STYLE[c.status] : "bg-muted text-muted-foreground"}`} variant="secondary">{c ? STATUS_LABEL[c.status] : "No key"}</Badge>
+                  <Badge className={`rounded-full ${c ? STATUS_STYLE[c.status] : "bg-muted text-muted-foreground"}`} variant="secondary">{c ? t(STATUS_LABEL[c.status]) : t("No key")}</Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 {c ? (
                   <>
-                    <p>Key: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs" aria-label={`Saved key ending in ${c.masked.slice(-4)}`}>{c.masked}</code></p>
+                    <p>{t("Key:")} <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs" aria-label={t("Saved key ending in {last4}", { last4: c.masked.slice(-4) })}>{c.masked}</code></p>
                     <p className="text-xs text-muted-foreground">
-                      {c.rotatedAt ? `Rotated ${new Date(c.rotatedAt).toLocaleDateString()}` : `Added ${new Date(c.createdAt).toLocaleDateString()}`}
-                      {c.lastTestedAt && ` · tested ${new Date(c.lastTestedAt).toLocaleString()}`}
+                      {c.rotatedAt ? t("Rotated {when}", { when: format.date(c.rotatedAt) }) : t("Added {when}", { when: format.date(c.createdAt) })}
+                      {c.lastTestedAt && ` · ${t("tested {when}", { when: format.dateTime(c.lastTestedAt) })}`}
                     </p>
-                    {c.status === "INVALID" || c.status === "ERROR" ? <p className="text-xs text-destructive">{describeProviderCode(c.lastErrorCode)}</p> : null}
+                    {c.status === "INVALID" || c.status === "ERROR" ? <p className="text-xs text-destructive">{describeProviderCode(c.lastErrorCode, t)}</p> : null}
                   </>
                 ) : (
-                  <p className="text-muted-foreground">Add a key to use {p.name} models.</p>
+                  <p className="text-muted-foreground">{t("Add a key to use {name} models.", { name: p.name })}</p>
                 )}
-                {p.embedding_dimensions_note && <p className="text-xs text-muted-foreground">{p.embedding_dimensions_note}</p>}
+                {p.embedding_dimensions_note && <p className="text-xs text-muted-foreground">{t(p.embedding_dimensions_note)}</p>}
               </CardContent>
               <CardFooter className="flex flex-wrap gap-2">
-                <Button size="sm" className="rounded-xl" onClick={() => setEditing(p)}>{c ? "Rotate key" : "Add key"}</Button>
+                <Button size="sm" className="rounded-xl" onClick={() => setEditing(p)}>{c ? t("Rotate key") : t("Add key")}</Button>
                 {c && (
                   <>
                     <Button size="sm" variant="outline" className="rounded-xl" onClick={() => test.mutate(p)} disabled={test.isPending}>
-                      {test.isPending && test.variables?.id === p.id ? <Loader2 className="animate-spin" aria-hidden /> : <Plug aria-hidden />} Test
+                      {test.isPending && test.variables?.id === p.id ? <Loader2 className="animate-spin" aria-hidden /> : <Plug aria-hidden />} {t("Test")}
                     </Button>
                     <Button size="sm" variant="ghost" className="rounded-xl text-destructive hover:text-destructive" onClick={() => setDeleting(p)}>
-                      <Trash2 aria-hidden /> Delete
+                      <Trash2 aria-hidden /> {t("Delete")}
                     </Button>
                   </>
                 )}
@@ -119,13 +121,13 @@ export function ApiKeysManager({ initial }: { initial: ProvidersResponse }) {
       <Dialog open={Boolean(deleting)} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {deleting?.name} key?</DialogTitle>
-            <DialogDescription>The key is permanently removed from our servers and any model settings that use it are cleared. Chat and document processing with {deleting?.name} will stop until you add a key again.</DialogDescription>
+            <DialogTitle>{t("Delete {name} key?", { name: deleting?.name ?? "" })}</DialogTitle>
+            <DialogDescription>{t("The key is permanently removed from our servers and any model settings that use it are cleared. Chat and document processing with {name} will stop until you add a key again.", { name: deleting?.name ?? "" })}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="outline" className="rounded-xl" onClick={() => setDeleting(null)}>{t("Cancel")}</Button>
             <Button variant="destructive" className="rounded-xl" disabled={remove.isPending} onClick={() => deleting && remove.mutate(deleting)}>
-              {remove.isPending && <RefreshCw className="animate-spin" aria-hidden />} Delete key
+              {remove.isPending && <RefreshCw className="animate-spin" aria-hidden />} {t("Delete key")}
             </Button>
           </DialogFooter>
         </DialogContent>

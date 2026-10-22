@@ -4,26 +4,29 @@ import { SidebarNav } from "./sidebar-nav";
 import { ThemeSync } from "./theme-sync";
 import { Topbar } from "./topbar";
 import { UserMenu } from "./user-menu";
+import { isAdminConsoleRole } from "@/lib/admin";
 import { sectionsFor } from "./nav-config";
+import { getT } from "@/lib/i18n/server";
 
-export function AppShell({
+export async function AppShell({
   user,
   unread,
   themePreference,
   children,
 }: {
-  user: { name: string; email: string; role: "USER" | "ADMIN" };
+  user: { name: string; email: string; role: "USER" | "SUPPORT" | "ADMIN" };
   unread: number;
   themePreference: "SYSTEM" | "LIGHT" | "DARK";
   children: React.ReactNode;
 }) {
-  const sections = sectionsFor(user.role === "ADMIN");
+  const t = await getT();
+  const sections = sectionsFor(isAdminConsoleRole(user.role));
   const items = sections.flatMap((s) => s.items);
   return (
     <div className="h-dvh bg-background lg:p-3">
       <ThemeSync preference={themePreference} />
       <div className="flex h-full overflow-hidden bg-card lg:rounded-2xl lg:border lg:shadow-card">
-        <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar lg:flex" aria-label="Sidebar">
+        <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar lg:flex" aria-label={t("Sidebar")}>
           <div className="flex h-16 items-center px-5"><Logo href="/workspace" /></div>
           <div className="px-3 pb-3"><CommandSearch items={items} registerShortcut /></div>
           <div className="flex-1 overflow-y-auto px-3 pb-3"><SidebarNav sections={sections} /></div>

@@ -1,6 +1,6 @@
 # StudyForge AI — Database (PostgreSQL 16 + pgvector + pg_trgm)
 
-_Source of truth: `backend/prisma/schema.prisma` and the SQL in `backend/prisma/migrations/`. Last verified: end of Part 4 (`prisma migrate diff` reports no drift)._
+_Source of truth: `backend/prisma/schema.prisma` and the SQL in `backend/prisma/migrations/`. Last verified: end of Part 5 (`prisma migrate diff` reports no drift)._
 
 ## Migrations
 | Migration | Adds |
@@ -8,6 +8,7 @@ _Source of truth: `backend/prisma/schema.prisma` and the SQL in `backend/prisma/
 | `20261022124741_init` | Part 1: identity (Better Auth tables), profile/preferences, notifications, audit, usage, rate limits |
 | `20261022135056_part2_ai_documents_chat` | Part 2: provider credentials, model preferences, conversations/messages/citations, documents + chunks (pgvector), jobs |
 | `20261022173147_part3_questions` | Part 3: generation runs, question bank, collections (additive; drops nothing) |
+| `20261023120000_part5_analysis_ops` | Part 5: `Role.SUPPORT`, `UserPreference.autoAiFeedback`, `ExamAnalysis`, `StudyPlan`, `MetricBucket`, `ServiceHeartbeat` (additive) |
 | `20261023020000_part4_exams_groups` | Part 4: groups, invites, exams, immutable versions + snapshots, attempts, answers, results; `Notification.link` / `dedupeKey` (additive; drops nothing) |
 
 Workflow: `pnpm prisma migrate dev --create-only`, **read the SQL**, then apply (`pnpm db:migrate:deploy` for any shared database). Raw SQL Prisma cannot express (partial unique indexes, CHECK constraints, owner-check triggers) is appended to the migration file by hand and is not reported as drift.
@@ -77,3 +78,16 @@ User ─┬─< Exam ─< ExamVersion ─┬─< ExamQuestionSnapshot ─┬─<
 | `Notification` | + `link`, + `dedupeKey` with unique `(userId, dedupeKey)` (NULLs never collide): the same event is never delivered twice to a user |
 
 Integer money: marks are stored as centi-marks (×100) in snapshots and results; negative marking is a fraction in basis points applied once at publish. No floating point is used in grading.
+
+## Part 5 additions (AI feedback, plans, operations)
+
+| Table | Key rules |
+|---|---|
+| `ExamAnalysis` | **one row per finalized result** (`resultId` unique, cascade from the result); `status` PENDING/READY/FAILED/NOT_CONFIGURED, `content` JSON (validated AI text), provider/model/tokens, `attempts` (bounded), `errorCode`. Derived and disposable: it never feeds grading; a failed or deleted row cannot affect a result. |
+| `StudyPlan` | one row per `(userId, fingerprint)` where the fingerprint hashes the verified inputs (topic statistics, result percentages, locale) → the same data never creates a second plan; `basis` JSON (counts only); newest `STUDY_PLAN_MAX_PER_USER` kept |
+| `MetricBucket` | PK `(bucket hour, name, label)`; counters only (API status classes by route group, provider outcomes, rate-limit/quota blocks); no user ids or content; purged after `METRICS_RETENTION_DAYS` |
+| `ServiceHeartbeat` | `name` PK; the worker writes `worker` from the ops heartbeat job (admin health shows its age) |
+| `UserPreference.autoAiFeedback` | opt-out of automatic AI feedback (default on; only runs when a model/key is configured) |
+| `Role` | adds `SUPPORT` (read-only operational access) |
+
+Analytics are **computed live** from finalized, released `ExamResult`/`ExamResultItem` rows through one SQL source (`modules/analytics/stats.ts`, `sources.ts`); there are no stored aggregates to recalculate or drift.

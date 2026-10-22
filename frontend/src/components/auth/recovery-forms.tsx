@@ -12,10 +12,13 @@ import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
 import { passwordSchema } from "@/lib/validation/password";
 import { FormField, PasswordField } from "./form-field";
+import { useT } from "@/lib/i18n/client";
+import { msg } from "@/lib/i18n/translate";
 
-const forgotSchema = z.object({ email: z.string().trim().toLowerCase().email("Enter a valid email address.") });
+const forgotSchema = z.object({ email: z.string().trim().toLowerCase().email(msg("Enter a valid email address.")) });
 
 export function ForgotPasswordForm() {
+  const t = useT();
   const [sent, setSent] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<z.input<typeof forgotSchema>>({ resolver: zodResolver(forgotSchema), defaultValues: { email: "" } });
@@ -25,7 +28,7 @@ export function ForgotPasswordForm() {
     const { email } = forgotSchema.parse(values);
     const { error } = await authClient.requestPasswordReset({ email, redirectTo: "/reset-password" });
     if (error?.status === 429) {
-      setFormError("Too many requests. Please wait a minute and try again.");
+      setFormError(t("Too many requests. Please wait a minute and try again."));
       return;
     }
     // Identical outcome whether or not the account exists.
@@ -36,18 +39,18 @@ export function ForgotPasswordForm() {
     return (
       <div className="space-y-3 text-center" role="status">
         <span className="mx-auto inline-flex size-12 items-center justify-center rounded-2xl bg-success-soft text-success"><MailCheck className="size-6" aria-hidden /></span>
-        <h2 className="text-lg font-semibold">Check your inbox</h2>
-        <p className="text-sm text-muted-foreground">If an account exists for that address, we&apos;ve sent a link to reset your password. It expires in one hour.</p>
-        <Button asChild variant="outline" className="rounded-xl"><Link href="/login">Back to sign in</Link></Button>
+        <h2 className="text-lg font-semibold">{t("Check your inbox")}</h2>
+        <p className="text-sm text-muted-foreground">{t("If an account exists for that address, we've sent a link to reset your password. It expires in one hour.")}</p>
+        <Button asChild variant="outline" className="rounded-xl"><Link href="/login">{t("Back to sign in")}</Link></Button>
       </div>
     );
   }
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label="Request password reset">
+    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label={t("Request password reset")}>
       {formError && <Alert variant="destructive" role="alert"><AlertDescription>{formError}</AlertDescription></Alert>}
-      <FormField label="Email" type="email" autoComplete="email" inputMode="email" error={errors.email?.message} {...register("email")} />
+      <FormField label={t("Email")} type="email" autoComplete="email" inputMode="email" error={errors.email?.message} {...register("email")} />
       <Button type="submit" className="h-10 w-full rounded-xl" disabled={isSubmitting}>
-        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} Send reset link
+        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} {t("Send reset link")}
       </Button>
     </form>
   );
@@ -55,9 +58,10 @@ export function ForgotPasswordForm() {
 
 const resetSchema = z
   .object({ password: passwordSchema, confirmPassword: z.string() })
-  .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: "Passwords do not match." });
+  .refine((v) => v.password === v.confirmPassword, { path: ["confirmPassword"], message: msg("Passwords do not match.") });
 
 export function ResetPasswordForm() {
+  const t = useT();
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
@@ -68,9 +72,9 @@ export function ResetPasswordForm() {
   if (linkInvalid) {
     return (
       <div className="space-y-3 text-center" role="alert">
-        <h2 className="text-lg font-semibold">This reset link isn&apos;t valid</h2>
-        <p className="text-sm text-muted-foreground">It may have expired or already been used. Request a new one.</p>
-        <Button asChild className="rounded-xl"><Link href="/forgot-password">Request a new link</Link></Button>
+        <h2 className="text-lg font-semibold">{t("This reset link isn't valid")}</h2>
+        <p className="text-sm text-muted-foreground">{t("It may have expired or already been used. Request a new one.")}</p>
+        <Button asChild className="rounded-xl"><Link href="/forgot-password">{t("Request a new link")}</Link></Button>
       </div>
     );
   }
@@ -80,19 +84,19 @@ export function ResetPasswordForm() {
     const v = resetSchema.parse(values);
     const { error } = await authClient.resetPassword({ newPassword: v.password, token: token! });
     if (error) {
-      setFormError(error.status === 429 ? "Too many attempts. Please wait a minute." : "This reset link is invalid or has expired. Request a new one.");
+      setFormError(error.status === 429 ? t("Too many attempts. Please wait a minute.") : t("This reset link is invalid or has expired. Request a new one."));
       return;
     }
     router.replace("/login?reset=1");
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label="Choose a new password">
+    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label={t("Choose a new password")}>
       {formError && <Alert variant="destructive" role="alert"><AlertDescription>{formError}</AlertDescription></Alert>}
-      <PasswordField label="New password" autoComplete="new-password" hint="At least 10 characters, with a letter and a number." error={errors.password?.message} {...register("password")} />
-      <PasswordField label="Confirm new password" autoComplete="new-password" error={errors.confirmPassword?.message} {...register("confirmPassword")} />
+      <PasswordField label={t("New password")} autoComplete="new-password" hint={t("At least 10 characters, with a letter and a number.")} error={errors.password?.message} {...register("password")} />
+      <PasswordField label={t("Confirm new password")} autoComplete="new-password" error={errors.confirmPassword?.message} {...register("confirmPassword")} />
       <Button type="submit" className="h-10 w-full rounded-xl" disabled={isSubmitting}>
-        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} Update password
+        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} {t("Update password")}
       </Button>
     </form>
   );

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * 1" # weekly: dependency audits catch advisories published after the last push
 
 permissions:
   contents: read
@@ -13,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Throw-away values for CI only. Never real credentials.
+  # Throw-away values for CI only. Never real credentials (see backend/docs/CI_NOTES.md).
   TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_test
   DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_test
   E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_e2e
@@ -25,7 +27,9 @@ env:
 
 jobs:
   backend:
+    name: backend (lint, typecheck, test, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults: { run: { working-directory: backend } }
     services:
       postgres:
@@ -46,8 +50,43 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  rag-agent:
+  migrations:
+    name: database migrations match the schema
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults: { run: { working-directory: backend } }
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_ci_migrate_test
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: studyforge_ci_migrate_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: backend/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: backend/.nvmrc, cache: pnpm, cache-dependency-path: backend/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      # 1. Every committed migration applies cleanly to an EMPTY database (the same command production uses).
+      - run: pnpm prisma migrate deploy
+      - run: pnpm prisma migrate status
+      # 2. The migrated database equals schema.prisma: any difference (a forgotten migration) fails the build.
+      - run: pnpm prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+      # 3. No migration may drop data silently: destructive statements must be reviewed by a human.
+      - name: Flag destructive SQL in migrations
+        run: |
+          if grep -nEi '^\s*(DROP (TABLE|COLUMN|TYPE|SCHEMA)|TRUNCATE|DELETE FROM)\b' prisma/migrations/*/migration.sql; then
+            echo "::warning::Destructive statements found in migrations (see log). Confirm they are intentional and safe for production data."
+          fi
+
+  rag-agent:
+    name: rag_agent (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults: { run: { working-directory: rag_agent } }
     services:
       postgres:
@@ -59,11 +98,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra dev
+      - run: uv sync --frozen
       - run: uv run pytest -q
 
   frontend:
+    name: frontend (lint, typecheck, test, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +119,48 @@ jobs:
       - run: pnpm build
         env: { BACKEND_URL: "http://127.0.0.1:4100" }
 
-  e2e:
+  security:
+    name: dependency audits and secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: backend/package.json }
+      - uses: astral-sh/setup-uv@v5
+      - name: Secret scan (tracked files)
+        run: bash backend/scripts/scan-secrets.sh
+      - name: Audit backend production dependencies
+        working-directory: backend
+        run: pnpm audit --prod
+      - name: Audit frontend production dependencies
+        working-directory: frontend
+        run: pnpm audit --prod
+      - name: Audit rag_agent dependencies (locked versions)
+        working-directory: rag_agent
+        run: uv export --frozen --no-hashes --no-emit-project | uvx pip-audit -r /dev/stdin --no-deps --disable-pip
+
+  docker:
+    name: docker image builds (not pushed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: backend, context: backend, args: "" }
+          - { name: backend-migrate, context: backend, args: "--target migrate" }
+          - { name: rag-agent, context: rag_agent, args: "" }
+          - { name: frontend, context: frontend, args: "--build-arg BACKEND_URL=http://backend:4000" }
+    steps:
+      - uses: actions/checkout@v4
+      # Build only: nothing is pushed or deployed from CI.
+      - run: docker build ${{ matrix.args }} -t studyforge-${{ matrix.name }}:ci ${{ matrix.context }}
+
+  e2e:
+    name: end-to-end (Chromium, mock AI provider)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     needs: [backend, rag-agent, frontend]
     services:
       postgres:
@@ -102,13 +183,13 @@ jobs:
         working-directory: backend
       - run: pnpm install --frozen-lockfile
         working-directory: frontend
-      - run: uv sync
+      - run: uv sync --frozen
         working-directory: rag_agent
       - run: pnpm exec playwright install --with-deps chromium
         working-directory: frontend
       - run: pnpm test:e2e
         working-directory: frontend
-        env: { E2E_SMTP_URL: "smtp://localhost:1025", E2E_MAILPIT_URL: "http://localhost:8025" }
+        env: { CI: "true", E2E_SMTP_URL: "smtp://localhost:1025", E2E_MAILPIT_URL: "http://localhost:8025" }
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -117,19 +198,3 @@ jobs:
             frontend/playwright-report
             frontend/test-results
           retention-days: 7
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
-        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      - uses: pnpm/action-setup@v4
-        with: { package_json_file: backend/package.json }
-      - uses: actions/setup-node@v4
-        with: { node-version-file: backend/.nvmrc }
-      - run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level=high
-        working-directory: backend
-      - run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level=high
-        working-directory: frontend

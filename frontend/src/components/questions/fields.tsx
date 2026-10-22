@@ -5,10 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n/client";
 
 export function FieldError({ id, children }: { id?: string; children?: React.ReactNode }) {
+  const t = useT();
   if (!children) return null;
-  return <p id={id} role="alert" className="mt-1 text-xs font-medium text-destructive">{children}</p>;
+  return <p id={id} role="alert" className="mt-1 text-xs font-medium text-destructive">{typeof children === "string" ? t(children) : children}</p>;
 }
 
 /** A number box that keeps what the user is typing ("0." stays "0.") and reports NaN while it isn't a number yet. */

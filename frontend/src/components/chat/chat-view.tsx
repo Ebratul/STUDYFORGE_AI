@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, ArrowUp, FileText, Loader2, MessageSquare, Square } from "lucide-react";
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, apiGet, apiSend } from "@/lib/api";
 import { describeProviderCode, type PreferencesResponse } from "@/lib/ai";
+import { takePrompt } from "@/lib/assistant";
 import { cn } from "@/lib/utils";
 import { DocumentPicker } from "./document-picker";
 import { AssistantBubble, UserBubble } from "./message-item";
@@ -34,6 +35,15 @@ export function ChatView({ conversationId }: { conversationId: string }) {
     getNextPageParam: (last) => last.nextBefore ?? undefined,
   });
   const messages = [...(history.data?.pages ?? [])].reverse().flatMap((p) => p.items);
+
+  // A prompt handed over by the study assistant (result page, study plan) is sent once, as soon as the conversation is ready.
+  const ready = conv.isSuccess && history.isSuccess && prefs.isSuccess && Boolean(prefs.data?.tasks.CHAT ?? prefs.data?.default) && messages.length === 0;
+  useEffect(() => {
+    if (!ready || stream.busy) return;
+    const prompt = takePrompt(conversationId); // removes it: a reload or re-render can never send it twice
+    if (prompt) void stream.send(prompt.slice(0, MAX_MESSAGE_CHARS));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   const update = useMutation({
     mutationFn: (patch: Record<string, unknown>) => apiSend<{ conversation: Conversation }>("PATCH", `/api/conversations/${conversationId}`, patch),

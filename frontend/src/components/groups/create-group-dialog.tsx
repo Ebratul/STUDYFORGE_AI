@@ -12,8 +12,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Field, NumberInput } from "@/components/questions/fields";
 import { ApiError, apiSend } from "@/lib/api";
 import { describeGroupError, GROUP_FIELD, type GroupLimits } from "@/lib/groups";
+import { useI18n } from "@/lib/i18n/client";
 
 export function CreateGroupDialog({ open, onOpenChange, limits }: { open: boolean; onOpenChange: (o: boolean) => void; limits: GroupLimits }) {
+  const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
   const [title, setTitle] = useState("");
@@ -23,23 +25,23 @@ export function CreateGroupDialog({ open, onOpenChange, limits }: { open: boolea
   const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  const titleError = !title.trim() ? "Give the group a name." : title.trim().length > GROUP_FIELD.title ? `Use at most ${GROUP_FIELD.title} characters.` : undefined;
-  const capError = !Number.isInteger(capacity) || capacity < 2 || capacity > limits.groupMaxCapacity ? `Choose a whole number from 2 to ${limits.groupMaxCapacity}.` : undefined;
-  const descError = description.length > GROUP_FIELD.description ? `Use at most ${GROUP_FIELD.description} characters.` : undefined;
+  const titleError = !title.trim() ? t("Give the group a name.") : title.trim().length > GROUP_FIELD.title ? t("Use at most {max} characters.", { max: GROUP_FIELD.title }) : undefined;
+  const capError = !Number.isInteger(capacity) || capacity < 2 || capacity > limits.groupMaxCapacity ? t("Choose a whole number from 2 to {max}.", { max: limits.groupMaxCapacity }) : undefined;
+  const descError = description.length > GROUP_FIELD.description ? t("Use at most {max} characters.", { max: GROUP_FIELD.description }) : undefined;
 
   const create = useMutation({
     mutationFn: () => apiSend<{ group: { id: string } }>("POST", "/api/groups", { title: title.trim(), description: description.trim() || null, capacity }),
     onSuccess: ({ group }) => {
       void qc.invalidateQueries({ queryKey: ["groups"] });
-      toast.success("Group created");
+      toast.success(t("Group created"));
       onOpenChange(false);
       router.push(`/groups/${group.id}`);
     },
     onError: (err) => {
       if (err instanceof ApiError) {
         setServerErrors(err.fields);
-        setError(Object.keys(err.fields).length ? null : describeGroupError(err));
-      } else setError("Something went wrong. Please try again.");
+        setError(Object.keys(err.fields).length ? null : describeGroupError(err, "generic", t));
+      } else setError(t("Something went wrong. Please try again."));
     },
   });
 
@@ -58,22 +60,22 @@ export function CreateGroupDialog({ open, onOpenChange, limits }: { open: boolea
           className="space-y-4"
         >
           <DialogHeader>
-            <DialogTitle>Create a study group</DialogTitle>
-            <DialogDescription>You become the owner. Invite people with a private code or link, then publish exams for the whole group.</DialogDescription>
+            <DialogTitle>{t("Create a study group")}</DialogTitle>
+            <DialogDescription>{t("You become the owner. Invite people with a private code or link, then publish exams for the whole group.")}</DialogDescription>
           </DialogHeader>
-          <Field label="Group name" htmlFor="group-title" error={(touched ? titleError : undefined) ?? serverErrors.title}>
+          <Field label={t("Group name")} htmlFor="group-title" error={(touched ? titleError : undefined) ?? serverErrors.title}>
             <Input id="group-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={GROUP_FIELD.title + 20} autoComplete="off" className="h-10 rounded-xl" aria-invalid={(touched && titleError) || serverErrors.title ? true : undefined} />
           </Field>
-          <Field label="Description (optional)" htmlFor="group-desc" error={descError ?? serverErrors.description}>
+          <Field label={t("Description (optional)")} htmlFor="group-desc" error={descError ?? serverErrors.description}>
             <Textarea id="group-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="rounded-xl" />
           </Field>
-          <Field label="Member capacity" htmlFor="group-capacity" hint={`Including you. Up to ${limits.groupMaxCapacity}.`} error={(touched ? capError : undefined) ?? serverErrors.capacity}>
+          <Field label={t("Member capacity")} htmlFor="group-capacity" hint={t("Including you. Up to {max}.", { max: limits.groupMaxCapacity })} error={(touched ? capError : undefined) ?? serverErrors.capacity}>
             <NumberInput id="group-capacity" value={capacity} onChange={setCapacity} min={2} max={limits.groupMaxCapacity} invalid={Boolean(touched && capError)} />
           </Field>
           {error && <p role="alert" className="text-sm font-medium text-destructive">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={create.isPending}>Cancel</Button>
-            <Button type="submit" className="rounded-xl" disabled={create.isPending}>{create.isPending && <Loader2 className="animate-spin" aria-hidden />} Create group</Button>
+            <Button type="button" variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)} disabled={create.isPending}>{t("Cancel")}</Button>
+            <Button type="submit" className="rounded-xl" disabled={create.isPending}>{create.isPending && <Loader2 className="animate-spin" aria-hidden />} {t("Create group")}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

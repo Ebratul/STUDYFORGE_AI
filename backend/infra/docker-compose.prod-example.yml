@@ -1,0 +1,58 @@
+# EXAMPLE ONLY — for local verification of the container images. Not a deployment definition.
+#   cp ../.env.example /tmp/studyforge.env   # then fill in the REQUIRED values (see ../docs/DEPLOYMENT.md)
+#   docker compose -f docker-compose.prod-example.yml --env-file /tmp/studyforge.env up --build
+# No credentials are stored here: every secret comes from the environment you pass in. Postgres is the local dev image with
+# pgvector (never expose it publicly); in production use a managed PostgreSQL with the `vector` and `pg_trgm` extensions.
+name: studyforge-example
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: studyforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a throw-away password for this local example}
+      POSTGRES_DB: studyforge
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U studyforge"], interval: 5s, timeout: 3s, retries: 10 }
+    volumes: [dbdata:/var/lib/postgresql/data]
+
+  migrate:
+    build: { context: ../, target: migrate }
+    environment:
+      DATABASE_URL: postgresql://studyforge:${POSTGRES_PASSWORD}@db:5432/studyforge
+    depends_on: { db: { condition: service_healthy } }
+    restart: "no"
+
+  rag_agent:
+    build: { context: ../../rag_agent }
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://studyforge:${POSTGRES_PASSWORD}@db:5432/studyforge
+      RAG_AGENT_TOKEN: ${RAG_AGENT_TOKEN:?required, >= 24 characters}
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    # internal only: no published port
+
+  backend:
+    build: { context: ../ }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://studyforge:${POSTGRES_PASSWORD}@db:5432/studyforge
+      APP_URL: ${APP_URL:?public https origin of the frontend}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?required, >= 32 characters}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?required, 32 random bytes base64}
+      RAG_AGENT_URL: http://rag_agent:8100
+      RAG_AGENT_TOKEN: ${RAG_AGENT_TOKEN}
+      STORAGE_DRIVER: local
+    volumes: [storage:/app/storage]
+    depends_on: [rag_agent]
+    # internal only: reachable by the frontend server, not by browsers
+
+  frontend:
+    build: { context: ../../frontend, args: { BACKEND_URL: http://backend:4000 } }
+    environment:
+      BACKEND_URL: http://backend:4000
+    ports: ["3000:3000"]
+    depends_on: [backend]
+
+volumes:
+  dbdata:
+  storage:

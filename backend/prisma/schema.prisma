@@ -1,6 +1,7 @@
 // StudyForge AI — schema. Part 1: identity/platform. Part 2: AI credentials, conversations, documents, retrieval, jobs.
 // Part 3: generation runs, question bank (questions, options, CQ parts, model answers, sources, revisions, collections).
 // Part 4: exams (drafts, immutable published versions + snapshots), attempts, results, groups, invitations.
+// Part 5: AI feedback and study plans (derived, retryable), operational metrics and heartbeats.
 // Later parts add their own models via new migrations.
 //
 // The rag_agent service reads/writes "Document" and "DocumentChunk" directly (see rag_agent/README.md);
@@ -20,6 +21,8 @@ datasource db {
 
 enum Role {
   USER
+  // Read-only operational access (users, audit, metrics, jobs, health). No role/status changes, no config.
+  SUPPORT
   ADMIN
 }
 
@@ -68,6 +71,8 @@ model User {
   examResults         ExamResult[]
   ownedGroups         Group[]
   groupMemberships    GroupMember[]
+  examAnalyses        ExamAnalysis[]
+  studyPlans          StudyPlan[]
 
   @@index([role])
   @@index([createdAt])
@@ -149,6 +154,8 @@ model UserPreference {
   locale             String          @default("en")
   theme              ThemePreference @default(SYSTEM)
   emailNotifications Boolean         @default(true)
+  // Part 5: generate AI feedback automatically once an exam result is released (uses the user's own provider key and quota).
+  autoAiFeedback     Boolean         @default(true)
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 }
@@ -1003,7 +1010,8 @@ model ExamResult {
   band            FeedbackBand
   finalizedAt     DateTime     @default(now())
 
-  items ExamResultItem[]
+  items    ExamResultItem[]
+  analysis ExamAnalysis?
 
   @@index([examVersionId, scoreCenti(sort: Desc)])
   @@index([userId, finalizedAt(sort: Desc)])
@@ -1018,4 +1026,78 @@ model ExamResultItem {
   awardedCenti     Int
 
   @@id([resultId, examQuestionId])
+}
+
+// ---------------------------------------------------------------------------
+// Part 5 — AI feedback, study plans, operations
+// ---------------------------------------------------------------------------
+
+enum AnalysisStatus {
+  PENDING
+  READY
+  FAILED
+  NOT_CONFIGURED
+}
+
+// Derived, disposable data: it never changes a result. One row per finalized result (unique), retryable without duplicates.
+model ExamAnalysis {
+  id               String         @id @default(cuid())
+  resultId         String         @unique
+  result           ExamResult     @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status           AnalysisStatus @default(PENDING)
+  content          Json?
+  provider         AiProvider?
+  model            String?
+  promptTokens     Int?
+  completionTokens Int?
+  attempts         Int            @default(0)
+  errorCode        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  generatedAt      DateTime?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, updatedAt])
+}
+
+// A personalised improvement plan for one state of the user's data (fingerprint = hash of the verified inputs).
+model StudyPlan {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint      String
+  status           AnalysisStatus @default(PENDING)
+  content          Json?
+  basis            Json // what it was built from (counts only), shown to the user
+  provider         AiProvider?
+  model            String?
+  promptTokens     Int?
+  completionTokens Int?
+  attempts         Int            @default(0)
+  errorCode        String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  generatedAt      DateTime?
+
+  @@unique([userId, fingerprint])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+// Hourly aggregate counters (API status classes, provider outcomes, rate-limit/quota blocks). No user ids, no content.
+model MetricBucket {
+  bucket DateTime
+  name   String
+  label  String   @default("")
+  count  Int      @default(0)
+
+  @@id([bucket, name, label])
+  @@index([name, bucket])
+}
+
+model ServiceHeartbeat {
+  name   String   @id
+  beatAt DateTime
+  info   Json?
 }

@@ -1,10 +1,10 @@
 # Implementation Status
 
-_Snapshot at the end of **Part 4** (timed exams, grading, groups, leaderboards; Part 3 content retained below). "Verified" means an automated test or a manual check listed here actually ran and passed._
+_Snapshot at the end of **Part 5** (AI agents, personalized analytics, admin, hardening, release docs; Parts 1–4 retained below). Companion documents: [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md) (feature → implementation → tests), [SECURITY.md](SECURITY.md), [DEPLOYMENT.md](DEPLOYMENT.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), [CI_NOTES.md](CI_NOTES.md). "Verified" means an automated test or a manual check listed here actually ran and passed._
 
 ## Repository & Git state
 * Root contains only `frontend/`, `backend/`, `rag_agent/` (+ `.git`, `.github`, `.gitignore`).
-* Parts 1–2 are in the user's own "first commit" (`Ebratul <ebratulshaharier@gmail.com>`, pushed to `origin/main` by the user). **Parts 3 and 4 are uncommitted in the working tree**; I have not committed, pushed or opened a PR. When asked to commit, use the repo's existing identity with no Claude/bot trailers.
+* Parts 1–2 are in the user's own "first commit" (`Ebratul <ebratulshaharier@gmail.com>`, pushed to `origin/main` by the user). Parts 3–4 are committed locally (not pushed); **Part 5 is committed locally after the final verification** (nothing pushed, no PR, no deployment); I have not committed, pushed or opened a PR. When asked to commit, use the repo's existing identity with no Claude/bot trailers.
 * Ignored (never committed): `.env*` (except `*.example`), `node_modules`, `.next`, `dist`, `backend/src/generated`, `backend/storage`, `rag_agent/.venv`, caches, test output.
 
 ## Feature status
@@ -12,6 +12,28 @@ Legend: ✅ implemented & verified · 🟡 implemented, partly verified · ⛔ p
 
 ### Part 1 (carried over; re-verified after the backend/frontend split)
 Accounts, recovery, verification, sessions, RBAC/admin, profile/preferences, notifications, privacy (password change, sessions, export, deletion), security headers/CSP, rate limiting, audit, design system, responsive shell — ✅ (same E2E coverage as before, now through the proxy + Hono backend).
+
+### Part 5 — AI agents, analytics, admin, hardening, i18n, release
+Contract: [PART5_SPEC.md](PART5_SPEC.md).
+
+| Area | Status | Notes |
+|---|---|---|
+| Full-system audit and integration checklist | ✅ | [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md) lists every capability with its implementation and tests plus the defects the audit found and fixed. |
+| Workflow A — post-exam analysis (LangGraph; verified, retryable, never alters results) | 🟡 | Real rag_agent + backend + UI exercised end-to-end with the **mock** provider (READY, FAILED, NOT_CONFIGURED, retry, no duplicate rows). Quality with a real model is unmeasured. |
+| Workflow B — improvement plan (deterministic suggestions always; AI plan with fingerprint idempotency; initial-suggestion labelling by code) | 🟡 | Same caveat. |
+| Workflow C — study assistant (explain incorrect, topic summary, revision plan, practice/CQ links) reusing Part 2 policies | ✅ gating / 🟡 answers | Authorization matrix tested; answers come from the Part 2 chat engine (mock in tests). |
+| One tested classification function (exact 60/70/80/90/100 boundaries) | ✅ | `bandFromPercentBp`, single frontend `lib/bands.ts`; duplicates removed. |
+| Student dashboard from real data (totals, null vs zero, trend, topic accuracy, breakdown, recent results, AI feedback, suggestions, saved content, groups, notifications) | ✅ | Consistency test: dashboard = results list = leaderboard scores. |
+| Group analytics (topics, completion, distribution) with privacy rules | ✅ | Topics need ≥ 3 participants; hidden-leaderboard and release rules enforced. |
+| Background processing (analysis/plan/expiry/reminder/release/ops jobs; bounded retries, idempotency, failure isolation, heartbeat) | ✅ | Postgres queue; no Redis. Worker loop tested via the job runner and in E2E (real worker in the backend process). |
+| Admin console (USER/SUPPORT/ADMIN, users, usage, metrics, jobs, health, audit, config; least privilege; no private content) | ✅ | 14 browser tests + backend permission matrix; metrics are in-process counters (per instance). |
+| Usage limits and cost controls (daily + monthly quotas, per-run caps, usage UI, no price claims) | ✅ | |
+| Security hardening review | ✅ (with documented risks) | [SECURITY.md](SECURITY.md). Fixed: server-side session revocation on password change; error `category` logging; metrics hooks; group-owner deletion notifies members; malformed job payloads. No independent audit. |
+| Observability (request ids, structured logs, redaction, health) | ✅ | No external error tracker/exporter. |
+| i18n: English + Bangla (cookie + saved preference, Intl formatting with Bengali digits, Noto Sans Bengali) | 🟡 | 1219 keys translated for the shell, auth, dashboard, exams (list/wizard/take/result), AI feedback/plan, groups/leaderboard, notifications, settings. **English-only:** admin console, MCQ/CQ generators, question bank, documents, chat, help/legal pages, page titles. Bangla written without native-speaker review. |
+| Accessibility | 🟡 | axe (WCAG A/AA) sweep over every non-admin route + admin + Bangla pages; keyboard checks on the exam screen; fixed WCAG 2.5.3 label mismatches. No screen-reader or real-device testing. |
+| CI/CD, Docker, scans, smoke test, env-docs | 🟡 | Workflow linted (actionlint) and each job's commands run locally; images build and run (backend, rag_agent, frontend); smoke script 23/23 against a local stack; **GitHub Actions never executed**. |
+| Full user journey E2E (register → … → recovery) | ✅ | `journey.spec.ts` (14 tests, mock provider). |
 
 ### Part 4 — exams, grading, groups, leaderboards
 Contract: [PART4_SPEC.md](PART4_SPEC.md). Schema: [DATABASE.md](DATABASE.md).
@@ -72,6 +94,22 @@ Contract: [PART3_SPEC.md](PART3_SPEC.md). Schema: [DATABASE.md](DATABASE.md).
 | Storage drivers | 🟡 | `local` ✅ (tests + E2E). `s3`: integration-tested only against **adobe/s3mock** (an S3 API mock), not Cloudflare R2/MinIO/AWS. |
 | Account deletion removes stored files | ✅ | Files are queued for deletion before the rows cascade (integration-tested). |
 | AI result analysis and personalized recommendations | ⛔ | Part 5. |
+
+## Verification results (run at completion of Part 5)
+
+| Check | Result |
+|---|---|
+| `backend`: `pnpm lint` · `typecheck` · `build` | pass |
+| `backend`: `prisma migrate diff` vs the migrated dev DB | no drift; all 5 migrations also applied to an empty database in the CI-migration check (fork D) |
+| `backend`: `pnpm test` (real Postgres `studyforge_test`) | 623 passed, 3 skipped; the 3 S3 tests pass against adobe/s3mock (3/3) |
+| `rag_agent`: `uv run pytest -q` (real Postgres + pgvector) | 563 passed |
+| `frontend`: `pnpm lint` · `typecheck` · `pnpm test` | pass · 279 passed |
+| `frontend`: `pnpm test:e2e` (Chromium; real rag_agent + backend + production frontend; **mock provider**) | 174 passed, 0 failed, 0 skipped |
+| Dependency audits | `pnpm audit --prod` (backend, frontend): no known vulnerabilities; `pip-audit` of the locked Python set: none |
+| Secret scan (`backend/scripts/scan-secrets.sh`, incl. untracked files) | clean |
+| Docker | backend, rag_agent, frontend images built and run locally (fork D); smoke test 23/23 |
+
+Defects found by the Part 5 audit and tests and fixed: see [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md). Also: sidebar Search/Account buttons had accessible names not containing their visible text (WCAG 2.5.3); the failed-AI card lacked the "score is unaffected" wording for provider-specific errors; malformed job payloads reached Prisma instead of being ignored.
 
 ## Verification results (run at completion of Part 4)
 
@@ -135,16 +173,14 @@ Backend: `DATABASE_URL`, `APP_URL`, `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION
 * Bengali PDF shaping was verified on a rendered page for common cases only; print output from a real browser print dialog was not exercised.
 * The `mock` provider's retrieval threshold and question content are synthetic; mock-driven E2E proves the plumbing, not the pedagogy.
 
-## Remaining work checklist
+## Remaining work before a production release
 
-**Part 5 — AI result analysis and personalized recommendations** (reads `ExamResult`/`ExamResultItem` + snapshot topics; a model never calculates or changes a score), plus any remaining admin/observability/quotas polish from the plan.
+1. **Run a manual pass with a real provider key** (chat, document Q&A, MCQ/CQ generation, exam analysis, study plan) and tune retrieval threshold, prompts and batch sizes. No live provider has ever been called.
+2. **Execute CI on GitHub** and fix whatever only a real runner reveals; enable GitHub secret scanning / gitleaks with history.
+3. **Independent security review / penetration test**; decide on a WAF/CDN for volumetric abuse.
+4. **Provision and verify real infrastructure** (managed Postgres with pgvector/pg_trgm, an S3-compatible bucket, SMTP, TLS/proxy) following DEPLOYMENT.md; run migrations as a deliberate, backed-up step; run `smoke.sh`.
+5. Native-speaker review of the Bangla UI text; extend translation to the English-only screens.
+6. Load-test the leaderboard SQL, sweeper and ingestion; multi-instance clock-skew check; decide on external metrics/error tracking.
+7. Optional features: question import/CSV, "used in N exams", group ownership transfer, e-mail channel with consent.
+8. Housekeeping: drop the obsolete local `studyforge` database; add `canStart` to the author form of `GET /api/exams/:id`.
 
-**Part 3/4 leftovers (optional)**
-- [ ] Manual end-to-end pass with a real provider key (generate → bank → exam → results) and tuning of retrieval/prompt settings.
-- [ ] Question import (JSON round-trip) and CSV export; "used in N exams" indicator on bank questions (data now exists).
-- [ ] Scheduled purge of expired `GenerationRun` rows; exam data retention policy.
-- [ ] Load test of the leaderboard SQL and the sweeper with thousands of attempts; multi-instance clock-skew check.
-- [ ] Optional ownership transfer for groups; optional e-mail channel behind explicit consent.
-- [ ] `canStart` on the author form of `GET /api/exams/:id`.
-
-**Carried over**: OCR for scanned PDFs, video transcription (unsupported), live LangSmith run, CI executed on GitHub, real S3/R2/MinIO, real SMTP, other browsers/devices, independent security review, drop the obsolete local `studyforge` database.

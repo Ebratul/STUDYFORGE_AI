@@ -115,7 +115,7 @@ describe("leaderboard formatting and ranks", () => {
     expect(formatScore({ scoreCenti: null, maxCenti: 1000 })).toBe("—");
   });
   it("shows the server's rank as received: ties repeat, the next rank skips, unranked is a dash", () => {
-    const ranks = [1, 2, 2, 4, null].map(rankText);
+    const ranks = [1, 2, 2, 4, null].map((r) => rankText(r));
     expect(ranks).toEqual(["1", "2", "2", "4", "—"]);
     expect([1, 2, 3, 4, null].map(isMedalRank)).toEqual([true, true, true, false, false]);
     expect(rankAriaLabel(2)).toBe("Rank 2");

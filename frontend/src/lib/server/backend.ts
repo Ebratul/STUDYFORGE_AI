@@ -46,7 +46,7 @@ export async function backendJson<T>(path: string): Promise<T> {
 }
 
 export type Me = {
-  user: { id: string; name: string; email: string; emailVerified: boolean; role: "USER" | "ADMIN"; createdAt: string };
+  user: { id: string; name: string; email: string; emailVerified: boolean; role: "USER" | "SUPPORT" | "ADMIN"; createdAt: string };
   unread: number;
   preference: { theme: "SYSTEM" | "LIGHT" | "DARK"; locale: string };
 };

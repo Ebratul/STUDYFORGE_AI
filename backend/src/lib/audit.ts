@@ -47,7 +47,12 @@ export type AuditAction =
   | "group.member_removed"
   | "group.role_changed"
   | "group.invite_created"
-  | "group.invite_revoked";
+  | "group.invite_revoked"
+  | "analysis.requested"
+  | "admin.user_status_changed"
+  | "admin.user_role_changed"
+  | "admin.sessions_revoked"
+  | "admin.job_retried";
 
 /** One-way, keyed hash so audit rows can correlate abuse without storing raw IPs. */
 export function hashIp(ip: string | null | undefined): string | null {

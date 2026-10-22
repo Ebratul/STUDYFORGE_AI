@@ -112,3 +112,18 @@ All members use the one published version; per-participant randomization only pe
 
 ### D-037 — Invite codes are bearer secrets stored as hashes · accepted (Part 4)
 128-bit random codes, shown once, only SHA-256 stored (like password-reset tokens); every failure mode returns the same `INVALID_INVITE`; per-user and per-IP hourly attempt limits count failures and successes; direct (e-mail) invites never reveal whether an account exists. Capacity is enforced three ways: group-row lock in the join transaction, advisory-locked DB trigger, and a CHECK on capacity.
+
+### D-038 — AI is derived text; the verified result is the source of truth · accepted (Part 5)
+`ExamAnalysis`/`StudyPlan` are stored separately from `ExamResult`, created by retryable jobs, and always accompanied by the deterministic band feedback. A failed, slow or unconfigured provider never blocks or alters a result, the dashboard or the leaderboard. The model may only choose among topics/lists the backend computed; every number in its text must be derivable from the supplied context (verified in code, Bangla digits included), and "mastery/trend" claims are rejected unless the backend-computed data level allows them. Rejected: letting the model compute statistics or classification.
+
+### D-039 — Analytics use released results only, through one SQL source · accepted (Part 5)
+Dashboard, analysis context, assistant, study plan and group topic analytics all read finalized *and released* results via `releasedSql`, with `accuracyBp` rounding and `sufficient` (≥ 3 answered) / data-level (≥ 3 results and a topic with ≥ 5 answers) rules defined once. A consistency test asserts the dashboard, results list and leaderboard report identical scores. "No data" (null) is always distinct from 0.
+
+### D-040 — Study assistant reuses the Part 2 conversation engine · accepted (Part 5)
+Instead of a second chat stack, assistant sessions create an ordinary conversation (GENERAL or DOCUMENT_ONLY) and return a first prompt built from data the caller may already see (e.g. a missed question when the exam's review policy is FULL). Authorization, quotas, citations, document checks and injection defences are therefore exactly Part 2's.
+
+### D-041 — Least-privilege operations; no break-glass access · accepted (Part 5)
+`SUPPORT` is read-only; every mutation is ADMIN-only and audited; non-holders see 404. There is deliberately no endpoint through which any administrator can read conversations, documents, credentials or exam answers; if a support workflow ever needs it, it must be a separate, explicitly authorised, narrowly scoped and audited design. Metrics are in-process counters flushed to Postgres (no external stack required); this trades fidelity for zero extra infrastructure.
+
+### D-042 — Postgres is the queue; no Redis · accepted (Part 5)
+Exam expiry, reminders, release notices, AI feedback/plan jobs and ingestion run on the existing `Job` table with bounded retries, dedupe keys and heartbeat visibility. A Redis-compatible queue would add an operational dependency without a feature need at the supported scale.

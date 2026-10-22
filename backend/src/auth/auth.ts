@@ -7,7 +7,7 @@ import { isMailConfigured, sendMail } from "../lib/mail.js";
 import { recordAudit } from "../lib/audit.js";
 import { logger } from "../lib/logger.js";
 import { PASSWORD_MAX, PASSWORD_MIN } from "../lib/password-policy.js";
-import { createWelcomeNotification } from "../modules/account/notifications.js";
+import { createWelcomeNotification, notifyUsers } from "../modules/account/notifications.js";
 
 function createAuth() {
   const env = getEnv();
@@ -77,6 +77,13 @@ function createAuth() {
           if (docs.length) {
             await db.job.createMany({ data: docs.map((d) => ({ type: "delete-object", payload: { key: d.storageKey }, maxAttempts: 6 })) });
           }
+          // Deleting an owner dissolves their groups (and the group exams/results). Tell the other members first; the notifications
+          // belong to the members, so they survive the cascade.
+          const groups = await db.group.findMany({ where: { ownerId: user.id }, select: { id: true, title: true, members: { where: { userId: { not: user.id } }, select: { userId: true } } } });
+          for (const g of groups)
+            await notifyUsers(g.members.map((m) => m.userId), {
+              type: "group.dissolved", title: "A group was removed", body: `The owner of “${g.title}” deleted their account, so the group and its exams were removed.`, dedupeKey: `group-dissolved:${g.id}`,
+            });
           await recordAudit({ actorId: user.id, action: "account.deletion_requested", targetType: "user", targetId: user.id });
         },
         afterDelete: async (user) => {
@@ -146,9 +153,13 @@ function createAuth() {
         if (failed) return;
         const userId = ctx.context.session?.user.id ?? ctx.context.newSession?.user.id;
         switch (ctx.path) {
-          case "/change-password":
+          case "/change-password": {
+            // Enforced here, not left to the client's `revokeOtherSessions` flag: a changed password ends every other session.
+            const keep = ctx.context.newSession?.session.id ?? ctx.context.session?.session.id;
+            if (userId && keep) await db.session.deleteMany({ where: { userId, id: { not: keep } } });
             await recordAudit({ actorId: userId, action: "auth.password_changed", targetType: "user", targetId: userId });
             break;
+          }
           case "/reset-password":
             await recordAudit({ action: "auth.password_reset" });
             break;

@@ -23,5 +23,6 @@ export const preferencesSchema = z.object({
   theme: z.enum(THEMES),
   locale: z.enum(LOCALES),
   emailNotifications: z.boolean(),
+  autoAiFeedback: z.boolean().optional(),
 });
 export type PreferencesInput = z.infer<typeof preferencesSchema>;

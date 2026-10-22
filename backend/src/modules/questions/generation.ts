@@ -8,6 +8,7 @@ import { parseWith } from "../../http/body.js";
 import { db } from "../../lib/db.js";
 import { AppError, Errors } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { recordProviderEvent } from "../../lib/metrics.js";
 import { recordAudit } from "../../lib/audit.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
@@ -362,6 +363,7 @@ export async function prepareGeneration(rag: RagAgentClient, user: SessionUser, 
 
     try {
       if (finished) {
+        recordProviderEvent(toWire(ctx.provider), kind.toLowerCase(), true);
         const { drafts, rejected } = acceptResult(ctx, finished, settings.count);
         const warnings = [...finished.warnings];
         if (rejected > 0) warnings.push({ code: "SOME_REJECTED", message: `${rejected} generated question${rejected === 1 ? " was" : "s were"} rejected by validation.` });
@@ -384,6 +386,7 @@ export async function prepareGeneration(rag: RagAgentClient, user: SessionUser, 
         }
       }
       if (failure) {
+        if (!signal.aborted && failure.code !== "GENERATION_FAILED") recordProviderEvent(toWire(ctx.provider), kind.toLowerCase(), false, failure.code);
         if (failure.code === "PROVIDER_AUTH_INVALID") await markCredentialInvalid(ctx.credentialId);
         await db.generationRun.update({ where: { id: run.id }, data: { status: signal.aborted ? "INTERRUPTED" : "FAILED", errorCode: failure.code === "GENERATION_FAILED" ? String(failure.details.reason ?? failure.code) : failure.code, finishedAt: new Date() } });
         if (signal.aborted) return;
@@ -425,9 +428,11 @@ export async function regenerateQuestion(rag: RagAgentClient, user: SessionUser,
     result = step.value;
   } catch (err) {
     const f = failureFrom(err);
+    if (f.code !== "GENERATION_FAILED") recordProviderEvent(toWire(ctx.provider), run.kind.toLowerCase(), false, f.code);
     if (f.code === "PROVIDER_AUTH_INVALID") await markCredentialInvalid(ctx.credentialId);
     throw toAppError(f);
   }
+  recordProviderEvent(toWire(ctx.provider), run.kind.toLowerCase(), true);
   await recordUsage(user.id, { provider: ctx.provider, model: ctx.modelId, task: run.kind, promptTokens: result.usage.prompt_tokens, completionTokens: result.usage.completion_tokens, requests: result.usage.llm_calls || 1 });
 
   const { drafts } = acceptResult(ctx, result, 1);

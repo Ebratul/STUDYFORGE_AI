@@ -13,11 +13,13 @@ import { authClient } from "@/lib/auth-client";
 import { loginSchema } from "@/lib/validation/profile";
 import { safeNextPath } from "@/lib/safe-next";
 import { FormField, PasswordField } from "./form-field";
+import { useT } from "@/lib/i18n/client";
 
 type Values = z.input<typeof loginSchema>;
 
 export function LoginForm() {
   const router = useRouter();
+  const t = useT();
   const params = useSearchParams();
   const [formError, setFormError] = useState<string | null>(null);
   const {
@@ -30,12 +32,12 @@ export function LoginForm() {
     const { error } = await authClient.signIn.email({ email: parsed.email, password: parsed.password });
     if (error) {
       if (error.status === 403) {
-        setFormError("Please verify your email address first. We've sent you a fresh verification link.");
+        setFormError(t("Please verify your email address first. We've sent you a fresh verification link."));
       } else if (error.status === 429) {
-        setFormError("Too many attempts. Please wait a minute and try again.");
+        setFormError(t("Too many attempts. Please wait a minute and try again."));
       } else {
         // Same message for unknown email and wrong password (no account enumeration).
-        setFormError("Incorrect email or password.");
+        setFormError(t("Incorrect email or password."));
       }
       return;
     }
@@ -44,20 +46,20 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label="Sign in">
+    <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4" aria-label={t("Sign in")}>
       {params.get("reset") === "1" && (
-        <Alert><AlertDescription>Your password was updated. Sign in with the new password.</AlertDescription></Alert>
+        <Alert><AlertDescription>{t("Your password was updated. Sign in with the new password.")}</AlertDescription></Alert>
       )}
       {formError && (
         <Alert variant="destructive" role="alert"><AlertDescription>{formError}</AlertDescription></Alert>
       )}
-      <FormField label="Email" type="email" autoComplete="email" inputMode="email" error={errors.email?.message} {...register("email")} />
-      <PasswordField label="Password" autoComplete="current-password" error={errors.password?.message} {...register("password")} />
+      <FormField label={t("Email")} type="email" autoComplete="email" inputMode="email" error={errors.email?.message} {...register("email")} />
+      <PasswordField label={t("Password")} autoComplete="current-password" error={errors.password?.message} {...register("password")} />
       <div className="flex justify-end">
-        <Link href="/forgot-password" className="text-sm font-medium text-primary hover:underline">Forgot password?</Link>
+        <Link href="/forgot-password" className="text-sm font-medium text-primary hover:underline">{t("Forgot password?")}</Link>
       </div>
       <Button type="submit" className="h-10 w-full rounded-xl" disabled={isSubmitting}>
-        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} Sign in
+        {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} {t("Sign in")}
       </Button>
     </form>
   );

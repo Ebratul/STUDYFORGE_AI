@@ -8,6 +8,7 @@ import {
   DIFFICULTY_SETTING_LABEL, effectiveGrounding, hasSources, LANGUAGE_LABEL, resolveLimits, validateMcqSettings,
   type DifficultySetting, type FieldErrors, type Grounding, type Language, type McqSettings, type ModelRef, type QuestionLimitsResponse,
 } from "@/lib/questions";
+import type { Prefill } from "@/lib/prefill";
 import { Field, NumberInput, Segmented, SwitchRow } from "./fields";
 import { GenerationError, GenerationProgress, RecentRuns } from "./generation-ui";
 import { ModelField } from "./model-field";
@@ -42,10 +43,14 @@ export function toMcqSettings(f: Form): McqSettings {
   };
 }
 
-export function McqWorkspace({ limitsResponse }: { limitsResponse: QuestionLimitsResponse }) {
+export function McqWorkspace({ limitsResponse, prefill }: { limitsResponse: QuestionLimitsResponse; prefill?: Prefill }) {
   const limits = resolveLimits(limitsResponse);
   const gen = useGeneration("MCQ");
-  const [form, setForm] = useState<Form>(INITIAL);
+  const [form, setForm] = useState<Form>(() =>
+    prefill
+      ? { ...INITIAL, sources: { ...INITIAL.sources, topic: prefill.topic, subject: prefill.subject }, groundingChoice: prefill.grounding }
+      : INITIAL,
+  );
   const [shown, setShown] = useState(false);
   const [last, setLast] = useState<McqSettings | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));

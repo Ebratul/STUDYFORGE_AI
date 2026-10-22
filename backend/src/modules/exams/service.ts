@@ -14,6 +14,7 @@ import { normKey } from "../questions/text.js";
 import { checkStart, requireGroupStaff, type StartCheck } from "./eligibility.js";
 import { fractionToBp, fromCenti, negativeCenti as negCenti, toCenti } from "./grading.js";
 import { EXAM_FIELDS } from "./limits.js";
+import { listReleasedResults, releasedTotals } from "../analytics/sources.js";
 import { isReleased, releaseTime } from "./release.js";
 import { createExamSchema, examDraftSchema, listExamsSchema, type ExamDraft } from "./schemas.js";
 import { snapshotHash, verifySnapshot, type SnapshotHeader, type SnapshotQuestion } from "./snapshot.js";
@@ -446,24 +447,15 @@ export async function listExams(user: SessionUser, q: ListQuery) {
 // ---------------------------------------------------------------------------------------------------------------------
 export async function dashboardExams(user: SessionUser) {
   const at = clockNow();
-  const [attempts, finalized, results, groups] = await Promise.all([
+  // Scores, averages and bands come from the shared analytics source (finalized + released results), so this block can never
+  // disagree with /api/analytics/me, the results list or the group leaderboard.
+  const [attempts, finalized, totals, recent, groups] = await Promise.all([
     db.examAttempt.count({ where: { userId: user.id } }),
     db.examAttempt.count({ where: { userId: user.id, status: { not: "IN_PROGRESS" } } }),
-    db.examResult.findMany({ where: { userId: user.id }, orderBy: { finalizedAt: "desc" }, take: 500, select: { attemptId: true, examVersionId: true, percentBp: true, band: true, finalizedAt: true } }),
+    releasedTotals(user.id, at),
+    listReleasedResults(user.id, { limit: 5, order: "desc", at }),
     db.groupMember.count({ where: { userId: user.id } }),
   ]);
-  const versions = await db.examVersion.findMany({
-    where: { id: { in: [...new Set(results.map((r) => r.examVersionId))] } },
-    select: { id: true, title: true, examId: true, releaseMode: true, closesAt: true, releaseAt: true },
-  });
-  const vmap = new Map(versions.map((v) => [v.id, v]));
-  const released = results.filter((r) => {
-    const v = vmap.get(r.examVersionId);
-    return v ? isReleased(v, at) : false;
-  });
-  const byBand: Record<string, number> = { EXCELLENT: 0, GOOD: 0, NEEDS_IMPROVEMENT: 0, BAD: 0, VERY_BAD: 0 };
-  for (const r of released) byBand[r.band]!++;
-  const avg = released.length ? Math.floor((released.reduce((s, r) => s + r.percentBp, 0) * 2 + released.length) / (2 * released.length)) : null;
   const upcoming = (await listExams(user, { scope: "available", page: 1, pageSize: 50 })).items
     .filter((e) => (e.opensAt && new Date(e.opensAt) > at) || (e.closesAt && new Date(e.closesAt) > at))
     .slice(0, 5)
@@ -471,10 +463,10 @@ export async function dashboardExams(user: SessionUser) {
   return {
     attempts,
     finalized,
-    averagePercentBp: avg,
-    best: released.length ? Math.max(...released.map((r) => r.percentBp)) : null,
-    byBand,
-    recent: released.slice(0, 5).map((r) => ({ attemptId: r.attemptId, examId: vmap.get(r.examVersionId)!.examId, title: vmap.get(r.examVersionId)!.title, percentBp: r.percentBp, band: r.band, finalizedAt: r.finalizedAt.toISOString() })),
+    averagePercentBp: totals.average,
+    best: totals.highest,
+    byBand: totals.bandCounts,
+    recent: recent.map((r) => ({ attemptId: r.attemptId, examId: r.examId, title: r.examTitle, percentBp: r.percentBp, band: r.band, finalizedAt: r.finalizedAt })),
     upcoming,
     groups,
   };

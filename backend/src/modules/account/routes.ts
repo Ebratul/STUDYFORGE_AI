@@ -2,10 +2,9 @@ import { Hono } from "hono";
 import { db } from "../../lib/db.js";
 import { recordAudit } from "../../lib/audit.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
-import { requireAuth, requirePermissionMw } from "../../http/middleware.js";
+import { requireAuth } from "../../http/middleware.js";
 import type { AppEnv } from "../../http/context.js";
 import { parseWith, readJson } from "../../http/body.js";
-import { daysAgo } from "../../lib/dates.js";
 import { dashboardExams } from "../exams/service.js";
 import { countUnread, listNotifications, markAllRead, markRead } from "./notifications.js";
 import { getProfileBundle, updatePreferences, updateProfile } from "./profile.js";
@@ -16,7 +15,7 @@ import { getDailyUsage } from "../ai/usage.js";
 
 export const accountRoutes = new Hono<AppEnv>();
 // Per-path (not "*") so this router's middleware can never leak onto other /api routes mounted next to it.
-for (const path of ["/me", "/profile", "/preferences", "/notifications", "/notifications/*", "/sessions", "/sessions/*", "/account/*", "/admin/*", "/dashboard/*"]) {
+for (const path of ["/me", "/profile", "/preferences", "/notifications", "/notifications/*", "/sessions", "/sessions/*", "/account/*", "/dashboard/*"]) {
   accountRoutes.use(path, requireAuth);
 }
 
@@ -26,7 +25,7 @@ accountRoutes.get("/me", async (c) => {
   return c.json({
     user: { id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified, role: user.role, createdAt: createdAt?.createdAt.toISOString() ?? null },
     unread,
-    preference: { theme: preference?.theme ?? "SYSTEM", locale: preference?.locale ?? "en" },
+    preference: { theme: preference?.theme ?? "SYSTEM", locale: preference?.locale ?? "en", autoAiFeedback: preference?.autoAiFeedback ?? true },
   });
 });
 
@@ -43,6 +42,7 @@ accountRoutes.get("/profile", async (c) => {
       theme: preference?.theme ?? "SYSTEM",
       locale: preference?.locale ?? "en",
       emailNotifications: preference?.emailNotifications ?? true,
+      autoAiFeedback: preference?.autoAiFeedback ?? true,
     },
   });
 });
@@ -134,25 +134,6 @@ accountRoutes.get("/account/export", async (c) => {
       "content-disposition": 'attachment; filename="studyforge-export.json"',
       "cache-control": "no-store",
     },
-  });
-});
-
-// Admin: aggregates and audit metadata only — never user content.
-accountRoutes.get("/admin/overview", requirePermissionMw("admin:dashboard:view"), async (c) => {
-  const since = daysAgo(7);
-  const [users, verified, newUsers, sessions, events] = await Promise.all([
-    db.user.count(),
-    db.user.count({ where: { emailVerified: true } }),
-    db.user.count({ where: { createdAt: { gte: since } } }),
-    db.session.count({ where: { expiresAt: { gt: new Date() } } }),
-    db.auditEvent.findMany({ orderBy: { createdAt: "desc" }, take: 20, select: { id: true, action: true, targetType: true, createdAt: true, actorId: true } }),
-  ]);
-  return c.json({
-    users,
-    verified,
-    newUsers,
-    sessions,
-    events: events.map((e) => ({ id: e.id, action: e.action, targetType: e.targetType, actor: e.actorId ? `${e.actorId.slice(0, 8)}…` : null, createdAt: e.createdAt.toISOString() })),
   });
 });
 

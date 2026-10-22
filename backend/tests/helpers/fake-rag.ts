@@ -1,7 +1,8 @@
 import type {
-  ChatEvent, ChatRequest, GenerateEvent, GenerateKind, GenerateRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, TestResult,
+  AnalyzePlanRequest, AnalyzeResponse, AnalyzeResultRequest, ChatEvent, ChatRequest, GenerateEvent, GenerateKind, GenerateRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, RagAnalysisContent, RagPlanContent, TestResult,
 } from "../../src/clients/rag-agent.js";
 import { RagAgentError } from "../../src/clients/rag-agent.js";
+import { defaultAnalyzePlan, defaultAnalyzeResult } from "./fake-analysis.js";
 import { defaultGenerateScript } from "./fake-generation.js";
 
 export const CATALOG: ProviderCatalogEntry[] = [
@@ -65,6 +66,19 @@ export class FakeRag implements RagAgentClient {
   generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal) {
     this.generateCalls.push({ kind, body });
     return this.generateScript(kind, body, signal);
+  }
+  analyzeCalls: AnalyzeResultRequest[] = [];
+  analyzePlanCalls: AnalyzePlanRequest[] = [];
+  /** Scripts may return a response or throw (e.g. a RagAgentError) to simulate provider failures. */
+  analyzeResultScript: (req: AnalyzeResultRequest, signal?: AbortSignal) => Promise<AnalyzeResponse<RagAnalysisContent>> = async (req) => defaultAnalyzeResult(req);
+  analyzePlanScript: (req: AnalyzePlanRequest, signal?: AbortSignal) => Promise<AnalyzeResponse<RagPlanContent>> = async (req) => defaultAnalyzePlan(req);
+  async analyzeResult(body: AnalyzeResultRequest, signal?: AbortSignal) {
+    this.analyzeCalls.push(body);
+    return this.analyzeResultScript(body, signal);
+  }
+  async analyzePlan(body: AnalyzePlanRequest, signal?: AbortSignal) {
+    this.analyzePlanCalls.push(body);
+    return this.analyzePlanScript(body, signal);
   }
   async ready() {
     return this.available;

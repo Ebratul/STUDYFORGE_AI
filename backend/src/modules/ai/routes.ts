@@ -11,7 +11,7 @@ import { apiKeySchema, deleteCredential, listCredentials, saveCredential, testCa
 import { getModels } from "./models.js";
 import { getPreferences, LIMITS, preferencesInput, setPreferences, TASKS } from "./preferences.js";
 import { enabledProviders, parseProvider, toWire } from "./providers.js";
-import { getDailyUsage } from "./usage.js";
+import { getUsageOverview } from "./usage.js";
 
 function mapRagError(err: unknown): never {
   if (err instanceof RagAgentError) {
@@ -100,7 +100,8 @@ export function aiRoutes(rag: RagAgentClient) {
     }
   });
 
-  r.get("/usage", async (c) => c.json(await getDailyUsage(c.get("user").id)));
+  // Daily fields stay at the top level (existing clients); `daily`, `monthly`, `byTask` and `note` are the Part 5 additions.
+  r.get("/usage", async (c) => c.json(await getUsageOverview(c.get("user").id)));
 
   return r;
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../src/lib/db.js";
+import { bandFromPercentBp } from "../../src/modules/exams/bands.js";
 import type { TestUser } from "./users.js";
 
 /** Direct-to-database fixtures for exam/group tests (they bypass the API on purpose so each suite can test its own layer in isolation). */
@@ -32,7 +33,7 @@ export async function seedBankQuestions(owner: TestUser, n: number, prefix = "Ba
   return out;
 }
 
-export const bandOf = (percentBp: number) => (percentBp >= 9000 ? "EXCELLENT" : percentBp >= 8000 ? "GOOD" : percentBp >= 7000 ? "NEEDS_IMPROVEMENT" : percentBp >= 6000 ? "BAD" : "VERY_BAD") as "EXCELLENT" | "GOOD" | "NEEDS_IMPROVEMENT" | "BAD" | "VERY_BAD";
+export const bandOf = bandFromPercentBp; // the one production classifier
 export const percentBpOf = (score: number, max: number) => Math.floor((score * 10000 * 2 + max) / (2 * max));
 
 /**
@@ -42,7 +43,7 @@ export const percentBpOf = (score: number, max: number) => Math.floor((score * 1
 export async function seedPublishedExam(opts: {
   owner: TestUser; group?: { id: string } | null; questionCount?: number; marksCenti?: number; negativeCenti?: number; durationSeconds?: number; attemptLimit?: number;
   opensAt?: Date | null; closesAt?: Date | null; releaseMode?: "IMMEDIATE" | "AFTER_CLOSE" | "AT_TIME"; releaseAt?: Date | null; reviewPolicy?: "NONE" | "CORRECTNESS" | "FULL";
-  shuffleQuestions?: boolean; shuffleOptions?: boolean; lateStart?: "CAP_AT_CLOSE" | "FULL_TIME_ONLY"; lateJoinGroup?: boolean; leaderboardVisible?: boolean; publishedAt?: Date; title?: string;
+  topics?: (string | null)[]; shuffleQuestions?: boolean; shuffleOptions?: boolean; lateStart?: "CAP_AT_CLOSE" | "FULL_TIME_ONLY"; lateJoinGroup?: boolean; leaderboardVisible?: boolean; publishedAt?: Date; title?: string;
 }) {
   const n = opts.questionCount ?? 3;
   const marks = opts.marksCenti ?? 100;
@@ -66,7 +67,7 @@ export async function seedPublishedExam(opts: {
     const q = await db.examQuestionSnapshot.create({
       data: {
         examVersionId: version.id, position: i, sourceQuestionVersion: 1, stem: `Snapshot question ${i + 1}`, explanation: `Snapshot explanation ${i + 1}`, shortNote: `Snapshot note ${i + 1}`,
-        topic: i % 2 ? "Topic B" : "Topic A", difficulty: "MEDIUM", language: "en", marksCenti: marks, negativeCenti: neg, sources: [],
+        topic: opts.topics ? (opts.topics[i] ?? null) : i % 2 ? "Topic B" : "Topic A", difficulty: "MEDIUM", language: "en", marksCenti: marks, negativeCenti: neg, sources: [],
         options: { create: [0, 1, 2, 3].map((k) => ({ position: k, text: `Snapshot option ${k} of ${i + 1}`, isCorrect: k === 0 })) },
       },
       include: { options: { orderBy: { position: "asc" } } },
@@ -79,6 +80,7 @@ export async function seedPublishedExam(opts: {
 /** Inserts a finalized attempt + result directly (for leaderboard/analytics tests); correct/incorrect counts are derived from the score. */
 export async function seedFinalResult(opts: {
   version: { id: string; totalCenti: number; questionCount: number }; user: TestUser; scoreCenti: number; status?: "SUBMITTED" | "TIMED_OUT"; attemptNo?: number; finalizedAt?: Date;
+  /** Test-only: store a deliberately wrong band to prove readers use the single classifier. */ bandOverride?: "EXCELLENT" | "GOOD" | "NEEDS_IMPROVEMENT" | "BAD" | "VERY_BAD";
 }) {
   const finalizedAt = opts.finalizedAt ?? new Date();
   const startedAt = new Date(finalizedAt.getTime() - 600_000);
@@ -94,8 +96,39 @@ export async function seedFinalResult(opts: {
   await db.examResult.create({
     data: {
       attemptId: attempt.id, examVersionId: opts.version.id, userId: opts.user.id, rawScoreCenti: opts.scoreCenti, scoreCenti: opts.scoreCenti, maxCenti: opts.version.totalCenti, percentBp,
-      correctCount: correct, incorrectCount: 0, unansweredCount: opts.version.questionCount - correct, band: bandOf(percentBp), finalizedAt,
+      correctCount: correct, incorrectCount: 0, unansweredCount: opts.version.questionCount - correct, band: opts.bandOverride ?? bandOf(percentBp), finalizedAt,
     },
+  });
+  return attempt;
+}
+
+/**
+ * Inserts a finalized attempt + result + one ExamResultItem per question from an outcome list (CORRECT/INCORRECT/UNANSWERED), computing the
+ * score from the questions' marks (no negative marking). Returns the attempt.
+ */
+export async function seedGradedResult(opts: {
+  version: { id: string; totalCenti: number; questionCount: number }; questions: SeedQuestion[]; user: TestUser; outcomes: ("CORRECT" | "INCORRECT" | "UNANSWERED")[];
+  attemptNo?: number; finalizedAt?: Date; status?: "SUBMITTED" | "TIMED_OUT";
+}) {
+  const finalizedAt = opts.finalizedAt ?? new Date();
+  const startedAt = new Date(finalizedAt.getTime() - 600_000);
+  const score = opts.outcomes.reduce((n, o, i) => n + (o === "CORRECT" ? opts.questions[i]!.marksCenti : 0), 0);
+  const percentBp = percentBpOf(score, opts.version.totalCenti);
+  const count = (o: string) => opts.outcomes.filter((x) => x === o).length;
+  const attempt = await db.examAttempt.create({
+    data: {
+      examVersionId: opts.version.id, userId: opts.user.id, attemptNo: opts.attemptNo ?? 1, status: opts.status ?? "SUBMITTED", startedAt, deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+      submittedAt: opts.status === "TIMED_OUT" ? null : finalizedAt, finalizedAt, questionOrder: [], optionOrder: {},
+    },
+  });
+  const result = await db.examResult.create({
+    data: {
+      attemptId: attempt.id, examVersionId: opts.version.id, userId: opts.user.id, rawScoreCenti: score, scoreCenti: score, maxCenti: opts.version.totalCenti, percentBp,
+      correctCount: count("CORRECT"), incorrectCount: count("INCORRECT"), unansweredCount: count("UNANSWERED"), band: bandOf(percentBp), finalizedAt,
+    },
+  });
+  await db.examResultItem.createMany({
+    data: opts.questions.map((q, i) => ({ resultId: result.id, examQuestionId: q.id, selectedOptionId: null, outcome: opts.outcomes[i]!, awardedCenti: opts.outcomes[i] === "CORRECT" ? q.marksCenti : 0 })),
   });
   return attempt;
 }

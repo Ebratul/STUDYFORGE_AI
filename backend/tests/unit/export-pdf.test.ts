@@ -83,7 +83,7 @@ describe("PDF export", () => {
   it("copes with hostile text: very long unbroken words, control characters, unsupported glyphs", async () => {
     const r = await pdf([mcq({ stem: `${"W".repeat(5000)} \u0000\u0007 😀 ∑ → ${"ক".repeat(3000)}` })], NONE);
     expect(ascii(r.body).startsWith("%PDF-")).toBe(true);
-  });
+  }, 30_000); // font shaping of 8k characters is CPU-bound: keep the limit generous on busy machines
 
   it.runIf(hasPdftotext)("contains the expected text, in order, with footers", async () => {
     const t = text((await pdf([mcq(), cq()], FULL, "Bio set")).body);

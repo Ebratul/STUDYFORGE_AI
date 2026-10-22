@@ -2,10 +2,10 @@ import { PARTICIPATION_LABEL, type ExamParticipation, type MyExamStatus } from "
 
 /** Types and pure helpers for the group-exam leaderboard (docs/PART4_SPEC.md §10). Ranks, scores and distribution are computed by the server; nothing here ranks or scores. */
 
-export type FeedbackBand = "EXCELLENT" | "GOOD" | "NEEDS_IMPROVEMENT" | "BAD" | "VERY_BAD";
-export const BAND_LABEL: Record<FeedbackBand, string> = {
-  EXCELLENT: "Excellent", GOOD: "Good", NEEDS_IMPROVEMENT: "Not good — needs improvement", BAD: "Bad", VERY_BAD: "Very bad",
-};
+import { BAND_LABEL, BAND_ORDER, type FeedbackBand } from "@/lib/bands";
+import { EN, type I18n } from "@/lib/format-locale";
+import { msg } from "@/lib/i18n/translate";
+export { BAND_LABEL, type FeedbackBand };
 
 export type DistributionBandId = "BELOW_60" | "60_70" | "70_80" | "80_90" | "90_100";
 export type DistributionBand = { band: DistributionBandId; label: string; count: number };
@@ -30,7 +30,7 @@ const n = (v: unknown): number | null => (typeof v === "number" && Number.isFini
 const s = (v: unknown, d = ""): string => (typeof v === "string" ? v : d);
 const STATUSES: ExamParticipation[] = ["NOT_STARTED", "IN_PROGRESS", "SUBMITTED", "TIMED_OUT", "MISSED"];
 const STATUSES_ALL: MyExamStatus[] = [...STATUSES, "AUTHOR", "NOT_ELIGIBLE"];
-const BANDS: FeedbackBand[] = ["EXCELLENT", "GOOD", "NEEDS_IMPROVEMENT", "BAD", "VERY_BAD"];
+const BANDS = BAND_ORDER;
 
 export function readEntry(raw: unknown): LeaderboardEntry {
   const e = isRec(raw) ? raw : {};
@@ -63,7 +63,7 @@ export function readLeaderboard(raw: unknown): LeaderboardResponse {
 }
 
 const DIST_ORDER: DistributionBandId[] = ["BELOW_60", "60_70", "70_80", "80_90", "90_100"];
-const DIST_LABEL: Record<DistributionBandId, string> = { BELOW_60: "Below 60%", "60_70": "60% – below 70%", "70_80": "70% – below 80%", "80_90": "80% – below 90%", "90_100": "90% – 100%" };
+const DIST_LABEL: Record<DistributionBandId, string> = { BELOW_60: msg("Below 60%"), "60_70": msg("60% – below 70%"), "70_80": msg("70% – below 80%"), "80_90": msg("80% – below 90%"), "90_100": msg("90% – 100%") };
 /** Chart rows for the five percentage bands, in the fixed order, using the server's counts (missing bands show 0). */
 export function readDistribution(raw: unknown): DistributionBand[] {
   const list = Array.isArray(raw) ? raw.filter(isRec) : [];
@@ -77,22 +77,23 @@ export const distributionTotal = (d: DistributionBand[]) => d.reduce((a, b) => a
 export const SHORT_BAND: Record<DistributionBandId, string> = { BELOW_60: "<60", "60_70": "60–70", "70_80": "70–80", "80_90": "80–90", "90_100": "90–100" };
 
 // ----------------------------------------------------------------------------------------------- formatting
-export function formatPercent(percentBp: number | null | undefined): string {
-  return typeof percentBp === "number" ? `${(percentBp / 100).toFixed(2)}%` : "—";
+export function formatPercent(percentBp: number | null | undefined, i18n: I18n = EN): string {
+  return typeof percentBp === "number" ? i18n.format.percentBp(percentBp) : "—";
 }
-export function formatMarks(centi: number | null | undefined): string {
+export function formatMarks(centi: number | null | undefined, i18n: I18n = EN): string {
   if (typeof centi !== "number") return "—";
   const v = centi / 100;
+  if (i18n.format.locale !== "en") return i18n.format.number(v, { maximumFractionDigits: 2 });
   return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/0$/, "");
 }
-export function formatScore(e: Pick<LeaderboardEntry, "scoreCenti" | "maxCenti">): string {
-  return e.scoreCenti === null ? "—" : `${formatMarks(e.scoreCenti)} / ${formatMarks(e.maxCenti)}`;
+export function formatScore(e: Pick<LeaderboardEntry, "scoreCenti" | "maxCenti">, i18n: I18n = EN): string {
+  return e.scoreCenti === null ? "—" : `${formatMarks(e.scoreCenti, i18n)} / ${formatMarks(e.maxCenti, i18n)}`;
 }
 
 /** Rank exactly as the server sent it (ties show the same number; the next one skips). Unranked rows show an en dash. */
-export const rankText = (rank: number | null) => (rank === null ? "—" : String(rank));
+export const rankText = (rank: number | null, i18n: I18n = EN) => (rank === null ? "—" : i18n.format.locale === "en" ? String(rank) : i18n.format.number(rank));
 export const isMedalRank = (rank: number | null) => rank !== null && rank >= 1 && rank <= 3;
-export const rankAriaLabel = (rank: number | null) => (rank === null ? "Not ranked" : `Rank ${rank}`);
+export const rankAriaLabel = (rank: number | null, t: I18n["t"] = EN.t) => (rank === null ? t("Not ranked") : t("Rank {n}", { n: rank }));
 
 export type StatusChip = { label: string; tone: "success" | "warning" | "muted" | "info" | "danger"; icon: "check" | "clock" | "play" | "minus" | "x" };
 export function statusChip(status: MyExamStatus): StatusChip {
@@ -111,10 +112,10 @@ export const isFinalized = (e: Pick<LeaderboardEntry, "status">) => e.status ===
 export const isZeroScore = (e: Pick<LeaderboardEntry, "status" | "scoreCenti">) => isFinalized(e) && e.scoreCenti === 0;
 
 /** Text alternative to the chart (for the table and the figure's aria-label). */
-export function distributionSummary(d: DistributionBand[]): string {
+export function distributionSummary(d: DistributionBand[], { t, format }: I18n = EN): string {
   const total = distributionTotal(d);
-  if (total === 0) return "No scores yet.";
-  return `Score distribution of ${total} ranked ${total === 1 ? "participant" : "participants"}: ${d.map((b) => `${b.label}: ${b.count}`).join("; ")}.`;
+  if (total === 0) return t("No scores yet.");
+  return `${t("Score distribution of {count, plural, one {# ranked participant} other {# ranked participants}}", { count: total })}: ${d.map((b) => `${t(b.label)}: ${format.number(b.count)}`).join("; ")}.`;
 }
 
 export type ParticipantRow = { displayName: string; status: ExamParticipation; scoreCenti: number | null; maxCenti: number | null; percentBp: number | null; isSelf: boolean };

@@ -13,14 +13,14 @@ import { isStaff } from "./permissions.js";
 export const RANKING_POLICY = "COMPETITION_1224_BEST_ATTEMPT" as const;
 export type EntryStatus = "SUBMITTED" | "TIMED_OUT" | "IN_PROGRESS" | "NOT_STARTED" | "MISSED";
 
-type Access = {
+export type Access = {
   exam: { id: string; title: string; ownerId: string; groupId: string; status: "DRAFT" | "PUBLISHED" | "CANCELLED" };
   version: { id: string; totalCenti: number; closesAt: Date | null; publishedAt: Date; lateJoinGroup: boolean; leaderboardVisible: boolean; releaseMode: "IMMEDIATE" | "AFTER_CLOSE" | "AT_TIME"; releaseAt: Date | null };
   staff: boolean;
 };
 
 /** Group-exam access: current members only (everyone else, and non-group exams, get 404). */
-async function loadAccess(user: SessionUser, examId: string): Promise<Access> {
+export async function loadAccess(user: SessionUser, examId: string): Promise<Access> {
   const exam = await db.exam.findUnique({ where: { id: examId }, select: { id: true, title: true, ownerId: true, groupId: true, mode: true, status: true, currentVersion: true } });
   if (!exam || exam.mode !== "GROUP" || !exam.groupId || exam.currentVersion < 1) throw Errors.notFound();
   const member = await db.groupMember.findUnique({ where: { groupId_userId: { groupId: exam.groupId, userId: user.id } }, select: { role: true } });
@@ -38,7 +38,7 @@ async function loadAccess(user: SessionUser, examId: string): Promise<Access> {
  * `best` = each participant's best finalized attempt (highest score, earliest finalization on ties) with its COMPETITION rank
  * (`rank()` window: 1, 2, 2, 4) computed in SQL over ranked participants only, `att` = attempt counters.
  */
-function cte(a: Access, closed: boolean): Prisma.Sql {
+export function cte(a: Access, closed: boolean): Prisma.Sql {
   return Prisma.sql`
     WITH parts AS (
       SELECT m."userId", m."role", m."showNameOnLeaderboard" AS "showName", COALESCE(NULLIF(btrim(p."displayName"), ''), u."name") AS "name"
@@ -49,7 +49,7 @@ function cte(a: Access, closed: boolean): Prisma.Sql {
         AND (${a.version.lateJoinGroup}::boolean OR m."joinedAt" <= ${a.version.publishedAt}::timestamp)
     ),
     best0 AS (
-      SELECT DISTINCT ON (r."userId") r."userId", r."scoreCenti", r."percentBp", r."band"::text AS "band", r."finalizedAt",
+      SELECT DISTINCT ON (r."userId") r."id" AS "resultId", r."userId", r."scoreCenti", r."percentBp", r."band"::text AS "band", r."finalizedAt",
              at."status"::text AS "attemptStatus", at."submittedAt"
       FROM "ExamResult" r
       JOIN "ExamAttempt" at ON at."id" = r."attemptId"
@@ -85,7 +85,7 @@ function entries(a: Access, closed: boolean, opts: { limit: number; offset: numb
     ${ORDER} LIMIT ${opts.limit} OFFSET ${opts.offset}`);
 }
 
-async function counts(a: Access, closed: boolean) {
+export async function counts(a: Access, closed: boolean) {
   const rows = await db.$queryRaw<{ status: EntryStatus; n: number }[]>(Prisma.sql`${cte(a, closed)} SELECT ent."status", count(*)::int AS "n" FROM ent GROUP BY ent."status"`);
   const get = (s: EntryStatus) => rows.find((r) => r.status === s)?.n ?? 0;
   const c = { submitted: get("SUBMITTED"), timedOut: get("TIMED_OUT"), inProgress: get("IN_PROGRESS"), notStarted: get("NOT_STARTED"), missed: get("MISSED") };
@@ -99,9 +99,7 @@ async function stats(a: Access, closed: boolean) {
            count(*)::int AS "ranked",
            round(avg("percentBp"))::int AS "average", max("percentBp") AS "highest", min("percentBp") AS "lowest",
            round(percentile_cont(0.5) WITHIN GROUP (ORDER BY "percentBp"))::int AS "median",
-           ARRAY[count(*) FILTER (WHERE "percentBp" < 6000), count(*) FILTER (WHERE "percentBp" >= 6000 AND "percentBp" < 7000),
-                 count(*) FILTER (WHERE "percentBp" >= 7000 AND "percentBp" < 8000), count(*) FILTER (WHERE "percentBp" >= 8000 AND "percentBp" < 9000),
-                 count(*) FILTER (WHERE "percentBp" >= 9000)]::int[] AS "bands"
+           ${Prisma.raw(`ARRAY[${DISTRIBUTION.map((d) => `count(*) FILTER (WHERE "percentBp" >= ${d.minBp} AND "percentBp" < ${d.maxBpExclusive})`).join(", ")}]::int[]`)} AS "bands"
     FROM best`);
   return {
     stats: { participants: s!.participants, ranked: s!.ranked, average: s!.average, highest: s!.highest, lowest: s!.lowest, median: s!.median },
@@ -112,7 +110,7 @@ async function stats(a: Access, closed: boolean) {
 /** Opaque, stable per (exam version, participant); not reversible to a user id. */
 const entryId = (versionId: string, userId: string) => createHmac("sha256", deriveKey("leaderboard-entry")).update(`${versionId}|${userId}`).digest("base64url").slice(0, 16);
 
-const isClosed = (a: Access, at: Date) => a.exam.status === "CANCELLED" || (a.version.closesAt !== null && at >= a.version.closesAt);
+export const isClosed = (a: Access, at: Date) => a.exam.status === "CANCELLED" || (a.version.closesAt !== null && at >= a.version.closesAt);
 
 export async function getLeaderboard(user: SessionUser, examId: string, q: { page: number; pageSize: number }) {
   const a = await loadAccess(user, examId);

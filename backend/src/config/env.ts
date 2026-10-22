@@ -103,6 +103,18 @@ const schema = z.object({
   INVITE_ATTEMPTS_PER_HOUR_USER: int(20, 1),
   INVITE_ATTEMPTS_PER_HOUR_IP: int(60, 1),
 
+  // --- AI feedback, plans, usage, metrics (Part 5; see docs/PART5_SPEC.md §2) ---
+  /** Optional monthly caps per user (0 = unlimited). Daily caps above still apply. */
+  AI_MONTHLY_TOKEN_LIMIT: int(0),
+  AI_MONTHLY_REQUEST_LIMIT: int(0),
+  ANALYSIS_MAX_ATTEMPTS: int(3, 1),
+  ANALYSIS_MAX_OUTPUT_TOKENS: int(1500, 200),
+  ANALYSIS_MAX_INCORRECT_ITEMS: int(15, 1),
+  ANALYSIS_RETRY_PER_HOUR: int(6, 1),
+  STUDY_PLAN_MAX_PER_USER: int(20, 1),
+  METRICS_RETENTION_DAYS: int(14, 1),
+  METRICS_FLUSH_SECONDS: int(30, 5),
+
   // --- background jobs ---
   JOB_WORKER_ENABLED: z.enum(["true", "false", "1", "0"]).default("true").transform((v) => v === "true" || v === "1"),
   JOB_POLL_INTERVAL_MS: int(1000, 50),

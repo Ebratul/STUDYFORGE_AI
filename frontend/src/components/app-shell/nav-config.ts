@@ -1,7 +1,8 @@
+import { msg } from "@/lib/i18n/translate";
 
 export type NavIconName =
   | "Sparkles" | "LayoutDashboard" | "MessagesSquare" | "ListChecks" | "PenLine" | "FileText" | "BookOpenCheck"
-  | "GraduationCap" | "Users" | "Bell" | "UserRound" | "ShieldCheck" | "SlidersHorizontal" | "KeyRound" | "ShieldAlert";
+  | "GraduationCap" | "NotebookPen" | "Users" | "Bell" | "UserRound" | "ShieldCheck" | "SlidersHorizontal" | "KeyRound" | "ShieldAlert";
 
 export type NavStatus = "ready" | "planned";
 export type NavItem = {
@@ -20,35 +21,36 @@ export type NavSection = { id: string; label: string; items: NavItem[] };
 export const NAV_SECTIONS: NavSection[] = [
   {
     id: "main",
-    label: "Main",
+    label: msg("Main"),
     items: [
-      { href: "/workspace", label: "Workspace", icon: "Sparkles", status: "ready", keywords: "home start" },
-      { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", status: "ready", keywords: "overview progress" },
-      { href: "/chat", label: "Conversation", icon: "MessagesSquare", status: "ready", keywords: "chat ai ask" },
-      { href: "/mcq", label: "MCQ Generator", icon: "ListChecks", status: "ready", keywords: "multiple choice questions" },
-      { href: "/cq", label: "CQ Generator", icon: "PenLine", status: "ready", keywords: "creative questions" },
+      { href: "/workspace", label: msg("Workspace"), icon: "Sparkles", status: "ready", keywords: "home start" },
+      { href: "/dashboard", label: msg("Dashboard"), icon: "LayoutDashboard", status: "ready", keywords: "overview progress" },
+      { href: "/study-plan", label: msg("Study plan"), icon: "NotebookPen", status: "ready", keywords: "improvement plan weak topics revision recommendations" },
+      { href: "/chat", label: msg("Conversation"), icon: "MessagesSquare", status: "ready", keywords: "chat ai ask" },
+      { href: "/mcq", label: msg("MCQ Generator"), icon: "ListChecks", status: "ready", keywords: "multiple choice questions" },
+      { href: "/cq", label: msg("CQ Generator"), icon: "PenLine", status: "ready", keywords: "creative questions" },
     ],
   },
   {
     id: "library",
-    label: "Library & Practice",
+    label: msg("Library & Practice"),
     items: [
-      { href: "/documents", label: "Documents", icon: "FileText", status: "ready", keywords: "upload pdf files" },
-      { href: "/question-bank", label: "Question Bank", icon: "BookOpenCheck", status: "ready", keywords: "saved questions collections" },
-      { href: "/exams", label: "Exams", icon: "GraduationCap", status: "ready", keywords: "history timed tests results" },
-      { href: "/groups", label: "Groups", icon: "Users", status: "ready", keywords: "study group leaderboard invite" },
+      { href: "/documents", label: msg("Documents"), icon: "FileText", status: "ready", keywords: "upload pdf files" },
+      { href: "/question-bank", label: msg("Question Bank"), icon: "BookOpenCheck", status: "ready", keywords: "saved questions collections" },
+      { href: "/exams", label: msg("Exams"), icon: "GraduationCap", status: "ready", keywords: "history timed tests results" },
+      { href: "/groups", label: msg("Groups"), icon: "Users", status: "ready", keywords: "study group leaderboard invite" },
     ],
   },
   {
     id: "system",
-    label: "System",
+    label: msg("System"),
     items: [
-      { href: "/notifications", label: "Notifications", icon: "Bell", status: "ready", keywords: "alerts inbox" },
-      { href: "/settings/profile", label: "Profile", icon: "UserRound", status: "ready", keywords: "name bio timezone" },
-      { href: "/settings/privacy", label: "Privacy & account", icon: "ShieldCheck", status: "ready", keywords: "password delete export sessions security" },
-      { href: "/settings/providers", label: "AI providers", icon: "SlidersHorizontal", status: "ready", keywords: "models openai openrouter groq" },
-      { href: "/settings/api-keys", label: "API keys", icon: "KeyRound", status: "ready", keywords: "byok credentials" },
-      { href: "/admin", label: "Admin", icon: "ShieldAlert", status: "ready", adminOnly: true, keywords: "operations" },
+      { href: "/notifications", label: msg("Notifications"), icon: "Bell", status: "ready", keywords: "alerts inbox" },
+      { href: "/settings/profile", label: msg("Profile"), icon: "UserRound", status: "ready", keywords: "name bio timezone" },
+      { href: "/settings/privacy", label: msg("Privacy & account"), icon: "ShieldCheck", status: "ready", keywords: "password delete export sessions security" },
+      { href: "/settings/providers", label: msg("AI providers"), icon: "SlidersHorizontal", status: "ready", keywords: "models openai openrouter groq" },
+      { href: "/settings/api-keys", label: msg("API keys"), icon: "KeyRound", status: "ready", keywords: "byok credentials" },
+      { href: "/admin", label: msg("Admin"), icon: "ShieldAlert", status: "ready", adminOnly: true, keywords: "operations" },
     ],
   },
 ];

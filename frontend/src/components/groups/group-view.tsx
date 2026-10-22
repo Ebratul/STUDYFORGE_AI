@@ -13,10 +13,12 @@ import { InvitesTab } from "./invites-tab";
 import { MembersTab } from "./members-tab";
 import { OverviewTab } from "./overview-tab";
 import { SettingsTab } from "./settings-tab";
+import { useI18n } from "@/lib/i18n/client";
 
 export type TabId = "overview" | "members" | "invites" | "exams" | "settings";
 
 export function GroupView({ initial, initialTab }: { initial: unknown; initialTab: string | null }) {
+  const { t } = useI18n();
   const first = readGroupDetail(initial);
   const q = useQuery({
     queryKey: ["group", first.id],
@@ -38,21 +40,21 @@ export function GroupView({ initial, initialTab }: { initial: unknown; initialTa
 
   return (
     <>
-      <Link href="/groups" className="mb-3 inline-flex items-center gap-1 rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"><ArrowLeft className="size-4" aria-hidden /> All groups</Link>
+      <Link href="/groups" className="mb-3 inline-flex items-center gap-1 rounded-md text-sm text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"><ArrowLeft className="size-4" aria-hidden /> {t("All groups")}</Link>
       <header className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="break-words text-2xl font-semibold tracking-tight" data-testid="group-title">{g.title}</h1>
-          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-1"><Users className="size-4" aria-hidden /> {g.memberCount} of {g.capacity} members</span><RoleBadge role={g.role} />{g.ownerName && <span>Owned by {g.ownerName}</span>}</p>
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><span className="inline-flex items-center gap-1"><Users className="size-4" aria-hidden /> {t("{count} of {capacity} members", { count: g.memberCount, capacity: g.capacity })}</span><RoleBadge role={g.role} />{g.ownerName && <span>{t("Owned by {name}", { name: g.ownerName })}</span>}</p>
         </div>
       </header>
       <Tabs value={tab} onValueChange={change}>
         <div className="-mx-1 overflow-x-auto px-1">
-          <TabsList variant="line" aria-label="Group sections" className="h-11 w-max min-w-full justify-start">
-            <TabsTrigger value="overview" className="min-h-10 px-3">Overview</TabsTrigger>
-            <TabsTrigger value="members" className="min-h-10 px-3">Members</TabsTrigger>
-            {staff && <TabsTrigger value="invites" className="min-h-10 px-3">Invitations</TabsTrigger>}
-            <TabsTrigger value="exams" className="min-h-10 px-3">Exams</TabsTrigger>
-            {owner && <TabsTrigger value="settings" className="min-h-10 px-3">Settings</TabsTrigger>}
+          <TabsList variant="line" aria-label={t("Group sections")} className="h-11 w-max min-w-full justify-start">
+            <TabsTrigger value="overview" className="min-h-10 px-3">{t("Overview")}</TabsTrigger>
+            <TabsTrigger value="members" className="min-h-10 px-3">{t("Members")}</TabsTrigger>
+            {staff && <TabsTrigger value="invites" className="min-h-10 px-3">{t("Invitations")}</TabsTrigger>}
+            <TabsTrigger value="exams" className="min-h-10 px-3">{t("Exams")}</TabsTrigger>
+            {owner && <TabsTrigger value="settings" className="min-h-10 px-3">{t("Settings")}</TabsTrigger>}
           </TabsList>
         </div>
         <TabsContent value="overview"><OverviewTab group={g} /></TabsContent>

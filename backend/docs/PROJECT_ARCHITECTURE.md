@@ -1,6 +1,6 @@
-# StudyForge AI — Project Architecture (through Part 4)
+# StudyForge AI — Project Architecture (through Part 5)
 
-_Keep this file in sync with the code. Last verified: end of Part 4. Normative contracts: [PART3_SPEC.md](PART3_SPEC.md) (generation + bank) and [PART4_SPEC.md](PART4_SPEC.md) (exams, attempts, grading, groups, leaderboards); the schema is described in [DATABASE.md](DATABASE.md)._
+_Keep this file in sync with the code. Last verified: end of Part 5. Normative contracts: [PART3_SPEC.md](PART3_SPEC.md) (generation + bank), [PART4_SPEC.md](PART4_SPEC.md) (exams, attempts, grading, groups, leaderboards) and [PART5_SPEC.md](PART5_SPEC.md) (AI feedback/plans/assistant, analytics, admin); operations docs: [SECURITY.md](SECURITY.md), [DEPLOYMENT.md](DEPLOYMENT.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md); the schema is described in [DATABASE.md](DATABASE.md)._
 
 ## 1. Shape of the system
 
@@ -10,7 +10,7 @@ The repository root contains exactly three folders (plus `.git`, `.github`, `.gi
 |---|---|---|
 | `frontend/` | Next.js 16 (App Router), React 19, Tailwind 4, shadcn/ui, TanStack Query | UI only. Calls the backend through a same-origin proxy. Holds **no** secrets and **no** database access. |
 | `backend/` | TypeScript, Hono on Node, Prisma 7 + PostgreSQL, Better Auth | System of record: authentication, authorization, BYOK credential encryption, conversations, documents, storage, job queue, usage quotas. Also holds the Prisma schema/migrations, local Docker infra and project docs. |
-| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector), retrieval, the two grounded-chat workflows, and (Part 3) the bounded MCQ / CQ generation workflows. |
+| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector), retrieval, the two grounded-chat workflows, the bounded MCQ / CQ generation workflows (Part 3) and the post-exam analysis / study-plan workflows (Part 5). |
 
 ```
 Browser ──► frontend (Next.js :3000)
@@ -55,6 +55,10 @@ Why this split: the browser must never see the backend, the AI service or any pr
 | `modules/questions` | **Part 3.** `schemas` (strict Zod: question input, generation settings, bodies), `content`/`provenance` (row ↔ DTO mapping; server-derived provenance), `service` (save/edit/list/bulk/revisions), `collections`, `generation` (runs, quotas, model/credential/document resolution, result re-validation, single-question regeneration), `export/` (JSON / TXT / PDF), `routes` (`/api/questions`, `/api/collections`, `/api/generation`, `/api/export`) |
 | `modules/exams` | **Part 4.** `schemas`/`limits` (strict Zod), `grading` (pure integer centi-mark grading, percentage, bands), `shuffle` (deterministic SHA-256 Fisher–Yates), `snapshot` (publish copy + hash + integrity), `eligibility`, `service` (drafts, preview, publish, cancel, duplicate, lists), `attempts` (start/resume under an advisory lock, autosave with `seq`, submit, the single row-locked `finalizeAttempt`), `results` (release-aware view; no key before release), `jobs` (`exam.expire`, `exam.sweep`, `exam.reminder`, `exam.release`), `lifecycle`, `release`/`bands` (pure) |
 | `modules/groups` | **Part 4.** groups, members and the roles matrix, hashed 128-bit invite codes, join (group row lock + capacity trigger + per-user/per-IP rate limits), group exam history, and the SQL leaderboard/participants endpoints (competition ranking, best attempt, privacy names) |
+| `modules/analysis` | **Part 5.** Workflow A/B orchestration: context building (review-policy-gated, no identifiers), jobs `exam.analysis` / `study-plan` (bounded retries, `NOT_CONFIGURED`, quota, idempotent rows), deterministic fallback feedback, `/api/analysis/*` |
+| `modules/assistant` | **Part 5.** Workflow C: creates ordinary conversations (Part 2 engine/policies) with a first prompt built from data the caller may already see |
+| `modules/analytics` | **Part 5.** `stats.ts`/`sources.ts` (the single SQL source for released results, topic stats, data levels), `/api/analytics/me`, suggestions |
+| `modules/admin` | **Part 5.** least-privilege console API (users, usage, metrics, jobs, health, audit, config), `ops.heartbeat` job; `lib/metrics.ts` in-process counters → `MetricBucket` |
 | `lib/clock.ts` | the one source of "now" for every deadline/window/release decision (server clock; replaceable in tests) |
 | `modules/jobs` | Postgres-backed queue (`FOR UPDATE SKIP LOCKED`, dedupe key as lock, backoff, stale-lock reaping), worker loop, `ingest` handler |
 | `clients/rag-agent.ts` | Typed HTTP client + SSE/NDJSON parsers for `rag_agent` |
@@ -112,6 +116,18 @@ All Part 1 controls remain (see §5 of the earlier revision: session cookies, CS
 | **Exports leak nothing** | Built from one explicitly constructed structure validated by a strict schema (export-local ids; no DB/document/run ids, owner, provider/model, review flags) | unit `export-*.test.ts`, integration `export.test.ts` |
 | **Prompt injection (generation)** | Same defences as chat: sources only in the delimited *user* turn, neutralised, no tools, citations/document names from the database, leak filter on outputs, SPEC block carries no secrets | rag_agent `test_generation_graph.py` |
 
+### 5.3 Part 5 additions
+
+| Concern | Implementation | Verified by |
+|---|---|---|
+| **AI can't change grades** | analysis/plan are derived rows keyed to a result; grading, bands, ranks come only from deterministic code; failure of any AI step leaves the result, dashboard and leaderboard unchanged and the deterministic band feedback is always returned | `analysis-core.test` (failed AI never alters/blocks results), `analytics-me.test`, e2e journey |
+| **No invented facts** | rag_agent verifies topics ⊆ supplied lists, every number derivable from the context (Bangla digits normalised), no mastery/trend claims unless the backend-computed data level allows; one repair, then error; backend re-validates | rag `test_analysis_verify/graph`, `analysis-verify.test` |
+| **Privacy-minimal context** | no ids/names/e-mail/document text; item detail only when the exam's review policy allows (FULL/CORRECTNESS/NONE tiers); released results only | `analysis-core.test` |
+| **Quotas & cost** | daily + monthly caps checked before every AI call (chat, generation, regeneration, analysis, plan); usage shown to the user; no price estimates | `usage-quota.test` |
+| **Admin least privilege** | USER/SUPPORT/ADMIN catalogue, 404 for non-holders, audited mutations, suspension revokes sessions, no endpoint for user content or secrets | `admin.test`, `hardening.test`, `permissions.test` |
+| **Observability** | request id on every response, error `category`, aggregate metrics (no user ids), worker heartbeat, queue lag, `/api/admin/health` | `admin-metrics.test`, `hardening.test` |
+| **Account deletion** | cascades all user rows; stored files queued for deletion; members of a deleted owner's groups are notified first | `account-deletion.test` |
+
 ### 5.2 Part 4 additions
 
 | Concern | Implementation | Verified by |
@@ -129,6 +145,8 @@ All Part 1 controls remain (see §5 of the earlier revision: session cookies, CS
 `app/(marketing)`, `app/(auth)`, `app/(app)/(main)` (workspace, dashboard, chat, documents, settings, placeholders), `app/(app)/admin`, `app/api/[...path]` (proxy), `components/{ui,app-shell,auth,account,ai,documents,chat,common}`, `lib/` (`api` client, `sse` reader, `server/backend` for server components, validation schemas). Server components never import database code; there is none in this package.
 
 Part 3 UI: `/mcq`, `/cq` (generation workspaces) and `/question-bank` (collections + searchable bank) share `components/questions/*` — source and settings fields, a review workspace (editable cards with stable draft ids, selection, regenerate, save-to-collection, copy, export, print), badges for source support / review reasons / answer basis, and a print layout scoped under `html.sf-printing`. Types and local (advisory) validation live in `lib/questions.ts`; the server remains the authority.
+
+Part 5 UI: `/dashboard` (real analytics: totals with null-vs-zero, trend, topic accuracy, breakdown, AI feedback, suggestions, saved content, groups), `/study-plan`, AI feedback card on results, usage and auto-feedback settings in Settings, the admin console `/admin/*` (overview, users, usage, metrics, jobs, health, audit, config), and English/Bangla localisation (`src/lib/i18n`, catalogs in `src/messages`, cookie `sf-locale` synced with the saved preference; English is the key so untranslated strings fall back invisibly).
 
 Part 4 UI: `/exams` (mine / available / history), the exam wizard (`/exams/new`, `/exams/[id]/edit`), `/exams/[id]`, the focused exam screen `/attempts/[id]` (own `(exam)` layout on the mint canvas, no app shell), `/attempts/[id]/result` (server-computed score, band, topic chart, review), `/groups`, `/groups/[id]`, `/join[/code]`, and `/exams/[id]/leaderboard` (Recharts score-distribution chart with a text alternative). The UI renders server values only; it never computes scores, ranks or release state.
 

@@ -10,6 +10,10 @@ import { aiRoutes } from "./modules/ai/routes.js";
 import { conversationRoutes } from "./modules/conversations/routes.js";
 import { documentRoutes } from "./modules/documents/routes.js";
 import { attemptRoutes, examRoutes } from "./modules/exams/routes.js";
+import { adminRoutes } from "./modules/admin/routes.js";
+import { analysisRoutes } from "./modules/analysis/routes.js";
+import { analyticsRoutes } from "./modules/analytics/routes.js";
+import { assistantRoutes } from "./modules/assistant/routes.js";
 import { groupRoutes } from "./modules/groups/routes.js";
 import { leaderboardRoutes } from "./modules/groups/leaderboard-routes.js";
 import { collectionRoutes, exportRoutes, generationRoutes, questionRoutes } from "./modules/questions/routes.js";
@@ -56,5 +60,9 @@ export function createApp(deps: Deps) {
   app.route("/api/exams", leaderboardRoutes());
   app.route("/api/attempts", attemptRoutes());
   app.route("/api/groups", groupRoutes());
+  app.route("/api/analysis", analysisRoutes());
+  app.route("/api/assistant", assistantRoutes());
+  app.route("/api/analytics", analyticsRoutes());
+  app.route("/api/admin", adminRoutes(deps));
   return app;
 }

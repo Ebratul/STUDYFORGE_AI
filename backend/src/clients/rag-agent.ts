@@ -138,6 +138,54 @@ export type GenerateEvent =
   | { event: "result"; data: GenerateResult }
   | { event: "error"; data: { code: string; message: string; retryable?: boolean; retry_after_seconds?: number | null; reason?: string } };
 
+// --- Part 5: AI feedback and study plans (rag_agent/CONTRACT.md §10, docs/PART5_SPEC.md §3 and §6) ---
+
+export type AnalyzeStepType = "REVIEW_NOTES" | "REVISIT_QUESTIONS" | "PRACTICE_MCQ" | "PRACTICE_CQ" | "COMPARE_ATTEMPTS" | "ASK_ASSISTANT" | "READ_DOCUMENT";
+export type AnalyzeChat = Credentials & { params: { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null } };
+export type AnalyzeTopic = { topic: string; questions: number; correct: number; incorrect: number; unanswered: number; accuracy_bp: number };
+
+export type AnalyzeResultContext = {
+  language: "en" | "bn";
+  exam: { title: string; question_count: number; percent_bp: number; band: string; correct: number; incorrect: number; unanswered: number };
+  topics: AnalyzeTopic[];
+  weak_topics: string[];
+  strong_topics: string[];
+  incorrect_items: { topic: string; stem: string; selected_text: string | null; correct_text: string | null; explanation: string | null; note: string | null }[];
+  history: {
+    data_level: "INITIAL" | "BASED_ON_HISTORY";
+    results_total: number;
+    previous_same_exam: { percent_bp: number }[];
+    topic_history: { topic: string; answered: number; accuracy_bp: number }[];
+  };
+};
+export type AnalyzePlanContext = {
+  language: "en" | "bn";
+  data_level: "INITIAL" | "BASED_ON_HISTORY";
+  results: { percent_bp: number }[];
+  topics: AnalyzeTopic[];
+  weak_topics: string[];
+  strong_topics: string[];
+};
+export type AnalyzeResultRequest = { request_id: string; chat: AnalyzeChat; context: AnalyzeResultContext };
+export type AnalyzePlanRequest = { request_id: string; chat: AnalyzeChat; context: AnalyzePlanContext };
+
+/** Model output as returned by rag_agent (already code-verified there; the backend verifies it again). */
+export type RagAnalysisContent = {
+  summary: string;
+  strengths: { topic: string; detail: string }[];
+  weaknesses: { topic: string; detail: string; evidence: string }[];
+  next_steps?: { type: string; topic: string | null; text: string }[];
+  nextSteps?: { type: string; topic: string | null; text: string }[];
+  caveats: string[];
+};
+export type RagPlanContent = {
+  headline: string;
+  focus: { topic: string; reason: string }[];
+  steps: { type: string; topic: string | null; text: string; minutes?: number | null }[];
+  caveats: string[];
+};
+export type AnalyzeResponse<T> = { result: T; usage: { prompt_tokens: number | null; completion_tokens: number | null; llm_calls: number }; warnings?: { code: string; message: string }[] };
+
 export type IngestParams = {
   document_id: string;
   owner_id: string;
@@ -167,6 +215,8 @@ export class RagAgentError extends Error {
     public readonly retryable = false,
     public readonly retryAfterSeconds: number | null = null,
     public readonly httpStatus = 502,
+    /** Machine reason from rag_agent (e.g. GENERATION_FAILED → INVALID_OUTPUT | UNGROUNDED_OUTPUT). */
+    public readonly reason: string | null = null,
   ) {
     super(message);
     this.name = "RagAgentError";
@@ -180,10 +230,12 @@ export interface RagAgentClient {
   ingest(params: IngestParams, file: Uint8Array, onProgress: (stage: string, progress: number) => void, signal?: AbortSignal): Promise<IngestResult>;
   chatStream(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent>;
   generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal): AsyncGenerator<GenerateEvent>;
+  analyzeResult(body: AnalyzeResultRequest, signal?: AbortSignal): Promise<AnalyzeResponse<RagAnalysisContent>>;
+  analyzePlan(body: AnalyzePlanRequest, signal?: AbortSignal): Promise<AnalyzeResponse<RagPlanContent>>;
   ready(): Promise<boolean>;
 }
 
-type ErrorBody = { error?: { code?: string; message?: string; retryable?: boolean; retry_after_seconds?: number | null } };
+type ErrorBody = { error?: { code?: string; message?: string; retryable?: boolean; retry_after_seconds?: number | null; reason?: string | null } };
 
 async function toError(res: Response): Promise<RagAgentError> {
   let body: ErrorBody = {};
@@ -200,6 +252,7 @@ async function toError(res: Response): Promise<RagAgentError> {
     Boolean(e?.retryable),
     e?.retry_after_seconds ?? null,
     res.status,
+    e?.reason ?? null,
   );
 }
 
@@ -352,6 +405,18 @@ export class HttpRagAgentClient implements RagAgentClient {
       const ev = parseSseBlock(block) as unknown as GenerateEvent | null;
       if (ev) yield ev;
     }
+  }
+
+  analyzeResult(body: AnalyzeResultRequest, signal?: AbortSignal) {
+    return this.json<AnalyzeResponse<RagAnalysisContent>>("/v1/analyze/result", {
+      method: "POST", headers: this.headers({ "content-type": "application/json", "x-request-id": body.request_id }), body: JSON.stringify(body), signal, timeoutMs: 90_000,
+    });
+  }
+
+  analyzePlan(body: AnalyzePlanRequest, signal?: AbortSignal) {
+    return this.json<AnalyzeResponse<RagPlanContent>>("/v1/analyze/plan", {
+      method: "POST", headers: this.headers({ "content-type": "application/json", "x-request-id": body.request_id }), body: JSON.stringify(body), signal, timeoutMs: 90_000,
+    });
   }
 
   async ready() {

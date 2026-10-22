@@ -16,10 +16,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiError, apiSend } from "@/lib/api";
 import { preferencesSchema, profileSchema, type PreferencesInput, type ProfileInput } from "@/lib/validation/profile";
 import { FormField } from "@/components/auth/form-field";
+import { useT, writeLocaleCookie } from "@/lib/i18n/client";
 
 const COMMON_ZONES = ["UTC", "Asia/Dhaka", "Asia/Kolkata", "Asia/Karachi", "Asia/Dubai", "Asia/Singapore", "Europe/London", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Los_Angeles", "Australia/Sydney"];
 
 export function ProfileForm({ initial, email }: { initial: ProfileInput; email: string }) {
+  const t = useT();
   const router = useRouter();
   const zones = COMMON_ZONES.includes(initial.timezone) ? COMMON_ZONES : [initial.timezone, ...COMMON_ZONES];
   const { register, handleSubmit, control, setError, formState: { errors, isSubmitting, isDirty }, reset } = useForm<ProfileInput>({
@@ -33,32 +35,32 @@ export function ProfileForm({ initial, email }: { initial: ProfileInput; email: 
     } catch (err) {
       if (err instanceof ApiError) {
         for (const [k, m] of Object.entries(err.fields)) setError(k as keyof ProfileInput, { message: m });
-        toast.error(err.fields && Object.keys(err.fields).length ? "Please fix the highlighted fields." : err.message);
+        toast.error(err.fields && Object.keys(err.fields).length ? t("Please fix the highlighted fields.") : err.message);
       } else throw err;
       return;
     }
-    toast.success("Profile saved");
+    toast.success(t("Profile saved"));
     reset(values);
     router.refresh();
   }
 
   return (
     <Card className="rounded-2xl shadow-card">
-      <form onSubmit={handleSubmit(onSubmit)} noValidate aria-label="Profile">
+      <form onSubmit={handleSubmit(onSubmit)} noValidate aria-label={t("Profile")}>
         <CardHeader>
-          <CardTitle>Profile</CardTitle>
-          <CardDescription>Your email ({email}) can&apos;t be changed in this version.</CardDescription>
+          <CardTitle>{t("Profile")}</CardTitle>
+          <CardDescription>{t("Your email ({email}) can't be changed in this version.", { email })}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Full name" autoComplete="name" error={errors.name?.message} {...register("name")} />
-          <FormField label="Display name" hint="Shown to group members in later parts." error={errors.displayName?.message} {...register("displayName")} />
+          <FormField label={t("Full name")} autoComplete="name" error={errors.name?.message} {...register("name")} />
+          <FormField label={t("Display name")} hint={t("Shown to group members in later parts.")} error={errors.displayName?.message} {...register("displayName")} />
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="bio">Bio</Label>
+            <Label htmlFor="bio">{t("Bio")}</Label>
             <Textarea id="bio" rows={3} className="rounded-xl" aria-invalid={errors.bio ? true : undefined} aria-describedby={errors.bio ? "bio-error" : undefined} {...register("bio")} />
             {errors.bio && <p id="bio-error" role="alert" className="text-xs font-medium text-destructive">{errors.bio.message}</p>}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="timezone">Time zone</Label>
+            <Label htmlFor="timezone">{t("Time zone")}</Label>
             <Controller
               control={control}
               name="timezone"
@@ -74,7 +76,7 @@ export function ProfileForm({ initial, email }: { initial: ProfileInput; email: 
         </CardContent>
         <CardFooter className="justify-end">
           <Button type="submit" className="rounded-xl" disabled={isSubmitting || !isDirty}>
-            {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} Save profile
+            {isSubmitting && <Loader2 className="animate-spin" aria-hidden />} {t("Save profile")}
           </Button>
         </CardFooter>
       </form>
@@ -83,10 +85,11 @@ export function ProfileForm({ initial, email }: { initial: ProfileInput; email: 
 }
 
 export function PreferencesForm({ initial }: { initial: PreferencesInput }) {
+  const t = useT();
   const router = useRouter();
   const { setTheme } = useTheme();
   const [saving, setSaving] = useState(false);
-  const { control, handleSubmit, formState: { isDirty }, reset } = useForm<PreferencesInput>({ resolver: zodResolver(preferencesSchema), defaultValues: initial });
+  const { control, handleSubmit, formState: { isDirty }, reset } = useForm<PreferencesInput>({ resolver: zodResolver(preferencesSchema), defaultValues: { ...initial, autoAiFeedback: initial.autoAiFeedback ?? true } });
 
   async function onSubmit(values: PreferencesInput) {
     setSaving(true);
@@ -94,48 +97,58 @@ export function PreferencesForm({ initial }: { initial: PreferencesInput }) {
       await apiSend("PATCH", "/api/preferences", values);
     } catch (err) {
       setSaving(false);
-      toast.error(err instanceof ApiError ? err.message : "Something went wrong.");
+      toast.error(err instanceof ApiError ? err.message : t("Something went wrong."));
       return;
     }
     setSaving(false);
     setTheme(values.theme.toLowerCase());
-    toast.success("Preferences saved");
+    writeLocaleCookie(values.locale);
+    toast.success(t("Preferences saved"));
     reset(values);
     router.refresh();
   }
 
   return (
     <Card className="rounded-2xl shadow-card">
-      <form onSubmit={handleSubmit(onSubmit)} aria-label="Preferences">
+      <form onSubmit={handleSubmit(onSubmit)} aria-label={t("Preferences")}>
         <CardHeader>
-          <CardTitle>Preferences</CardTitle>
-          <CardDescription>Language selection is stored now; translated interface text arrives with the localisation work.</CardDescription>
+          <CardTitle>{t("Preferences")}</CardTitle>
+          <CardDescription>{t("Your language and theme follow you across devices. Some screens may still appear in English.")}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="theme">Theme</Label>
+            <Label htmlFor="theme">{t("Theme")}</Label>
             <Controller control={control} name="theme" render={({ field }) => (
               <Select value={field.value} onValueChange={field.onChange}>
                 <SelectTrigger id="theme" className="h-10 w-full rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="SYSTEM">System</SelectItem><SelectItem value="LIGHT">Light</SelectItem><SelectItem value="DARK">Dark</SelectItem>
+                  <SelectItem value="SYSTEM">{t("System")}</SelectItem><SelectItem value="LIGHT">{t("Light")}</SelectItem><SelectItem value="DARK">{t("Dark")}</SelectItem>
                 </SelectContent>
               </Select>
             )} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="locale">Language</Label>
+            <Label htmlFor="locale">{t("Language")}</Label>
             <Controller control={control} name="locale" render={({ field }) => (
               <Select value={field.value} onValueChange={field.onChange}>
                 <SelectTrigger id="locale" className="h-10 w-full rounded-xl"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="en">English</SelectItem><SelectItem value="bn">বাংলা (Bangla)</SelectItem></SelectContent>
+                <SelectContent><SelectItem value="en">{t("English")}</SelectItem><SelectItem value="bn" lang="bn">বাংলা (Bangla)</SelectItem></SelectContent>
               </Select>
             )} />
           </div>
           <div className="flex items-center justify-between gap-4 rounded-xl border p-3 sm:col-span-2">
             <div>
-              <Label htmlFor="emailNotifications">Email notifications</Label>
-              <p className="text-xs text-muted-foreground">Receive important account updates by email.</p>
+              <Label htmlFor="autoAiFeedback">{t("Automatic AI feedback")}</Label>
+              <p className="text-xs text-muted-foreground">{t("After an exam result is released, write short AI feedback from your verified results. It uses your own AI key and counts toward your usage; it never changes a score. You can always ask for it manually.")}</p>
+            </div>
+            <Controller control={control} name="autoAiFeedback" render={({ field }) => (
+              <Switch id="autoAiFeedback" checked={field.value ?? true} onCheckedChange={field.onChange} />
+            )} />
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-xl border p-3 sm:col-span-2">
+            <div>
+              <Label htmlFor="emailNotifications">{t("Email notifications")}</Label>
+              <p className="text-xs text-muted-foreground">{t("Receive important account updates by email.")}</p>
             </div>
             <Controller control={control} name="emailNotifications" render={({ field }) => (
               <Switch id="emailNotifications" checked={field.value} onCheckedChange={field.onChange} />
@@ -144,7 +157,7 @@ export function PreferencesForm({ initial }: { initial: PreferencesInput }) {
         </CardContent>
         <CardFooter className="justify-end">
           <Button type="submit" className="rounded-xl" disabled={saving || !isDirty}>
-            {saving && <Loader2 className="animate-spin" aria-hidden />} Save preferences
+            {saving && <Loader2 className="animate-spin" aria-hidden />} {t("Save preferences")}
           </Button>
         </CardFooter>
       </form>

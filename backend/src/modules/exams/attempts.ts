@@ -8,6 +8,7 @@ import { AppError, Errors } from "../../lib/errors.js";
 import { recordAudit } from "../../lib/audit.js";
 import { logger } from "../../lib/logger.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
+import { scheduleAutoAnalysis } from "../analysis/service.js";
 import { enqueue } from "../jobs/queue.js";
 import { notifyUsers } from "../account/notifications.js";
 import { checkStart, throwIfNotAllowed } from "./eligibility.js";
@@ -72,8 +73,11 @@ export async function afterFinalized(info: FinalizeInfo | null | undefined): Pro
       link,
       dedupeKey: `attempt-submitted:${info.attemptId}`,
     });
-    if (isReleased(v, clockNow()))
+    if (isReleased(v, clockNow())) {
       await notifyUsers([info.userId], { type: "exam.results_available", title: "Your results are available", body: `Results for “${v.title}” are ready.`, link, dedupeKey: `results:${v.id}` });
+      const result = await db.examResult.findUnique({ where: { attemptId: info.attemptId }, select: { id: true } });
+      if (result) await scheduleAutoAnalysis(result.id); // optional AI feedback; never affects the result
+    }
     await recordAudit({ actorId: info.userId, action: "attempt.finalized", targetType: "attempt", targetId: info.attemptId, metadata: { reason: info.reason } });
   } catch (err) {
     logger.error("exam.after_finalize_failed", { attemptId: info.attemptId, err });

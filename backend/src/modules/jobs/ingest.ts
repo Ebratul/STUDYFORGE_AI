@@ -1,4 +1,5 @@
 import type { RagAgentClient } from "../../clients/rag-agent.js";
+import { recordProviderEvent } from "../../lib/metrics.js";
 import { RagAgentError } from "../../clients/rag-agent.js";
 import { db } from "../../lib/db.js";
 import { logger } from "../../lib/logger.js";
@@ -75,6 +76,7 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
           signal,
         );
 
+        recordProviderEvent(embedding.provider, "embedding", result.type !== "error", result.type === "error" ? result.code : null);
         if (result.type === "error") {
           if (result.code === "PROVIDER_AUTH_INVALID") await markCredentialInvalid(embedding.credentialId);
           if (result.retryable && job.attempts < job.maxAttempts) {
@@ -110,6 +112,7 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
       } catch (err) {
         if (err instanceof RetryableJobError) throw err;
         if (err instanceof RagAgentError) {
+          recordProviderEvent(embedding.provider, "embedding", false, err.code);
           if (err.retryable && job.attempts < job.maxAttempts) {
             await db.document.updateMany({ where: { id: doc.id }, data: { status: "QUEUED", progress: 0 } });
             throw new RetryableJobError(err.code, err.retryAfterSeconds ? err.retryAfterSeconds * 1000 : undefined);

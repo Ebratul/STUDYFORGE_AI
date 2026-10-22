@@ -3,6 +3,9 @@ import { now as clockNow } from "../../lib/clock.js";
 import { db } from "../../lib/db.js";
 import { logger } from "../../lib/logger.js";
 import { notifyUsers } from "../account/notifications.js";
+import type { RagAgentClient } from "../../clients/rag-agent.js";
+import { analysisHandlers } from "../analysis/jobs.js";
+import { scheduleAutoAnalysis } from "../analysis/service.js";
 import { enqueue, RetryableJobError } from "../jobs/queue.js";
 import type { Handlers } from "../jobs/worker.js";
 import { finalizeExpiredAttempts, finalizeIfExpired } from "./attempts.js";
@@ -35,11 +38,13 @@ export async function sendReleaseNotices(versionId: string): Promise<boolean> {
   const v = await db.examVersion.findUnique({ where: { id: versionId }, select: { id: true, examId: true, title: true, releaseMode: true, closesAt: true, releaseAt: true } });
   if (!v) return true;
   if (!isReleased(v, clockNow())) return false;
-  const results = await db.examResult.findMany({ where: { examVersionId: v.id }, orderBy: { finalizedAt: "desc" }, select: { attemptId: true, userId: true } });
-  const latest = new Map<string, string>();
-  for (const r of results) if (!latest.has(r.userId)) latest.set(r.userId, r.attemptId);
-  for (const [userId, attemptId] of latest)
+  const results = await db.examResult.findMany({ where: { examVersionId: v.id }, orderBy: { finalizedAt: "desc" }, select: { id: true, attemptId: true, userId: true } });
+  const latest = new Map<string, { attemptId: string; resultId: string }>();
+  for (const r of results) if (!latest.has(r.userId)) latest.set(r.userId, { attemptId: r.attemptId, resultId: r.id });
+  for (const [userId, { attemptId, resultId }] of latest) {
     await notifyUsers([userId], { type: "exam.results_available", title: "Your results are available", body: `Results for “${v.title}” are ready.`, link: `/attempts/${attemptId}/result`, dedupeKey: `results:${v.id}` });
+    await scheduleAutoAnalysis(resultId); // optional AI feedback (skipped when disabled/unconfigured; idempotent)
+  }
   await db.examVersionState.updateMany({ where: { examVersionId: v.id }, data: { resultsNotifiedAt: clockNow() } });
   return true;
 }
@@ -77,8 +82,9 @@ export async function ensureSweeperScheduled(): Promise<void> {
   await enqueue(db, { type: "exam.sweep", payload: { slot: "a" }, dedupeKey: "exam-sweep-a", maxAttempts: 3 });
 }
 
-export function examHandlers(): Handlers {
+export function examHandlers(rag?: RagAgentClient): Handlers {
   return {
+    ...(rag ? analysisHandlers(rag) : {}),
     "exam.expire": async (job) => {
       const { attemptId } = job.payload as { attemptId: string };
       if (await finalizeIfExpired(attemptId)) return;

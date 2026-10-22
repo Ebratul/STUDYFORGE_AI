@@ -6,6 +6,7 @@ import { getEnv } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 import { AppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { recordProviderEvent } from "../../lib/metrics.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import type { SessionUser } from "../../auth/types.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
@@ -225,6 +226,7 @@ export async function prepareChat(
     let saved: MessageView | null = null;
     try {
       if (outcome === "final" && final) {
+        if (!final.fallback) recordProviderEvent(chat.provider, "chat", true);
         const data: Prisma.MessageUpdateInput = {
           content: final.content,
           status: "COMPLETE",
@@ -249,6 +251,7 @@ export async function prepareChat(
         if (!final.fallback)
           await recordUsage(user.id, { provider: chat.provider, model: chat.modelId, task: "CHAT", promptTokens: final.usage?.prompt_tokens, completionTokens: final.usage?.completion_tokens });
       } else if (outcome === "error" && failure) {
+        recordProviderEvent(chat.provider, "chat", false, failure.code);
         if (failure.code === "PROVIDER_AUTH_INVALID") await markCredentialInvalid(chatKey.credentialId);
         const row = await db.message.update({ where: { id: assistant.id }, data: { content, status: "FAILED", errorCode: failure.code }, include: { citations: true } });
         saved = toMessageView(row);

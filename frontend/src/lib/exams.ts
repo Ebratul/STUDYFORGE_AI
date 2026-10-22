@@ -12,7 +12,10 @@ export type ReviewPolicy = "NONE" | "CORRECTNESS" | "FULL";
 export type ReleaseMode = "IMMEDIATE" | "AFTER_CLOSE" | "AT_TIME";
 export type LateStart = "CAP_AT_CLOSE" | "FULL_TIME_ONLY";
 export type AttemptStatus = "IN_PROGRESS" | "SUBMITTED" | "TIMED_OUT";
-export type FeedbackBand = "EXCELLENT" | "GOOD" | "NEEDS_IMPROVEMENT" | "BAD" | "VERY_BAD";
+import type { FeedbackBand } from "@/lib/bands";
+import { EN, type I18n } from "@/lib/format-locale";
+import { msg, type TFunction } from "@/lib/i18n/translate";
+export { BAND_INFO, BAND_ORDER, bandLabel, type FeedbackBand } from "@/lib/bands";
 export type Outcome = "CORRECT" | "INCORRECT" | "UNANSWERED";
 
 export type ExamDraftInput = {
@@ -191,7 +194,8 @@ export function resolveExamLimits(r?: ExamLimitsResponse | null): ExamLimits {
 // Formatting (centi-marks, basis points, durations, local time <-> UTC ISO)
 // ---------------------------------------------------------------------------------------------------------------------
 /** 250 -> "2.5", 300 -> "3", 25 -> "0.25". Pure formatting of a server integer. */
-export function formatCenti(centi: number): string {
+export function formatCenti(centi: number, i18n: I18n = EN): string {
+  if (i18n.format.locale !== "en") return i18n.format.centi(centi);
   const sign = centi < 0 ? "-" : "";
   const abs = Math.abs(Math.round(centi));
   const whole = Math.floor(abs / 100);
@@ -199,17 +203,19 @@ export function formatCenti(centi: number): string {
   if (frac === 0) return `${sign}${whole}`;
   return `${sign}${whole}.${String(frac).padStart(2, "0").replace(/0$/, "")}`;
 }
-export const formatMarks = (marks: number): string => (Number.isInteger(marks) ? String(marks) : String(Math.round(marks * 100) / 100));
+export const formatMarks = (marks: number, i18n: I18n = EN): string => (i18n.format.locale !== "en" ? i18n.format.marks(marks) : Number.isInteger(marks) ? String(marks) : String(Math.round(marks * 100) / 100));
 /** 8750 -> "87.50%"; 10000 -> "100.00%". */
-export function formatPercentBp(bp: number): string {
+export function formatPercentBp(bp: number, i18n: I18n = EN): string {
+  if (i18n.format.locale !== "en") return i18n.format.percentBp(bp);
   const whole = Math.floor(bp / 100);
   return `${whole}.${String(bp % 100).padStart(2, "0")}%`;
 }
-export function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
+export function formatDuration(minutes: number, i18n: I18n = EN): string {
+  const { t } = i18n;
+  if (minutes < 60) return t("{minutes} min", { minutes });
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
+  return m ? t("{hours} h {minutes} min", { hours: h, minutes: m }) : t("{hours} h", { hours: h });
 }
 /** Countdown text: "9:05" or "1:02:03". */
 export function formatClock(ms: number): string {
@@ -234,40 +240,29 @@ export function localInputToIso(local: string): string | null {
   const d = new Date(local);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+export function formatDateTime(iso: string | null | undefined, i18n: I18n = EN): string {
+  return i18n.format.dateTime(iso);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Bands: labels and wording only. The band itself always comes from the server.
 // ---------------------------------------------------------------------------------------------------------------------
-export const BAND_INFO: Record<FeedbackBand, { label: string; range: string; tone: "success" | "primary" | "warning" | "orange" | "destructive"; message: string }> = {
-  EXCELLENT: { label: "Excellent", range: "90% – 100%", tone: "success", message: "Outstanding work. You have a strong grip on this material — keep revising to stay sharp." },
-  GOOD: { label: "Good", range: "80% – below 90%", tone: "primary", message: "Good result. A little more practice on the questions you missed will push you into the top band." },
-  NEEDS_IMPROVEMENT: { label: "Not good — needs improvement", range: "70% – below 80%", tone: "warning", message: "You're getting there. Review the topics below and try again — steady practice makes a real difference." },
-  BAD: { label: "Bad", range: "60% – below 70%", tone: "orange", message: "This one was tough. Start with the explanations for the questions you missed, then retry when you feel ready." },
-  VERY_BAD: { label: "Very bad", range: "Below 60%", tone: "destructive", message: "This attempt didn't go the way you wanted, and that's okay. Go through the review, focus on one topic at a time, and try again." },
-};
 /** The server may send feedback as text or as {label, message}. */
 export const feedbackText = (f: string | { label?: string; message?: string } | undefined | null): string | null => (typeof f === "string" ? f : f?.message ?? null);
-export const BAND_ORDER: FeedbackBand[] = ["EXCELLENT", "GOOD", "NEEDS_IMPROVEMENT", "BAD", "VERY_BAD"];
-export const bandLabel = (b: FeedbackBand): string => BAND_INFO[b].label;
 
 export const REVIEW_POLICY_TEXT: Record<ReviewPolicy, { label: string; hint: string }> = {
-  NONE: { label: "Score only", hint: "Participants see their score and nothing about individual questions." },
-  CORRECTNESS: { label: "Right / wrong", hint: "Participants see which questions they got right or wrong, but not the correct answers." },
-  FULL: { label: "Full review", hint: "Participants also see the correct answer, explanation and notes for every question." },
+  NONE: { label: msg("Score only"), hint: msg("Participants see their score and nothing about individual questions.") },
+  CORRECTNESS: { label: msg("Right / wrong"), hint: msg("Participants see which questions they got right or wrong, but not the correct answers.") },
+  FULL: { label: msg("Full review"), hint: msg("Participants also see the correct answer, explanation and notes for every question.") },
 };
 export const RELEASE_TEXT: Record<ReleaseMode, { label: string; hint: string }> = {
-  IMMEDIATE: { label: "Right after submitting", hint: "Each participant sees their result as soon as they submit." },
-  AFTER_CLOSE: { label: "When the exam closes", hint: "Everyone sees results at the same time, after the closing time. Needs a closing time." },
-  AT_TIME: { label: "At a set time", hint: "Results are hidden until the time you choose (not before the closing time, if there is one)." },
+  IMMEDIATE: { label: msg("Right after submitting"), hint: msg("Each participant sees their result as soon as they submit.") },
+  AFTER_CLOSE: { label: msg("When the exam closes"), hint: msg("Everyone sees results at the same time, after the closing time. Needs a closing time.") },
+  AT_TIME: { label: msg("At a set time"), hint: msg("Results are hidden until the time you choose (not before the closing time, if there is one).") },
 };
 export const LATE_START_TEXT: Record<LateStart, { label: string; hint: string }> = {
-  CAP_AT_CLOSE: { label: "Late starters get less time", hint: "You can start any time before the closing time, but the clock never runs past it." },
-  FULL_TIME_ONLY: { label: "Everyone gets the full time", hint: "Starting is blocked once there isn't a full duration left before the closing time." },
+  CAP_AT_CLOSE: { label: msg("Late starters get less time"), hint: msg("You can start any time before the closing time, but the clock never runs past it.") },
+  FULL_TIME_ONLY: { label: msg("Everyone gets the full time"), hint: msg("Starting is blocked once there isn't a full duration left before the closing time.") },
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -327,31 +322,31 @@ export function draftIsSendable(d: ExamDraftInput): boolean {
 }
 
 export type DraftErrors = Record<string, string>;
-export function validateDraftLocal(d: ExamDraftInput, limits: ExamLimits, mode: ExamMode): DraftErrors {
+export function validateDraftLocal(d: ExamDraftInput, limits: ExamLimits, mode: ExamMode, t: TFunction = EN.t): DraftErrors {
   const e: DraftErrors = {};
-  if (!d.title.trim()) e.title = "Give the exam a title.";
-  if (d.title.length > 120) e.title = "Use at most 120 characters.";
-  if ((d.description ?? "").length > 1000) e.description = "Use at most 1000 characters.";
-  if (d.questionIds.length === 0) e.questionIds = "Add at least one question.";
-  if (d.questionIds.length > limits.maxQuestions) e.questionIds = `An exam can have up to ${limits.maxQuestions} questions.`;
-  if (!Number.isFinite(d.marks.perQuestion) || d.marks.perQuestion < 0.25 || d.marks.perQuestion > 100) e["marks.perQuestion"] = "Marks per question must be between 0.25 and 100.";
-  for (const [id, m] of Object.entries(d.marks.overrides ?? {})) if (!Number.isFinite(m) || m < 0.25 || m > 100) e[`marks.overrides.${id}`] = "Between 0.25 and 100.";
-  if (!Number.isFinite(d.negativeMarking.fraction) || d.negativeMarking.fraction < 0 || d.negativeMarking.fraction > 1) e["negativeMarking.fraction"] = "Use a fraction between 0 and 1.";
-  if (!Number.isInteger(d.durationMinutes) || d.durationMinutes < 1 || d.durationMinutes > limits.maxDurationMinutes) e.durationMinutes = `Between 1 and ${limits.maxDurationMinutes} minutes.`;
-  if (!Number.isInteger(d.attemptLimit) || d.attemptLimit < 1 || d.attemptLimit > limits.maxAttemptLimit) e.attemptLimit = `Between 1 and ${limits.maxAttemptLimit}.`;
+  if (!d.title.trim()) e.title = t("Give the exam a title.");
+  if (d.title.length > 120) e.title = t("Use at most 120 characters.");
+  if ((d.description ?? "").length > 1000) e.description = t("Use at most 1000 characters.");
+  if (d.questionIds.length === 0) e.questionIds = t("Add at least one question.");
+  if (d.questionIds.length > limits.maxQuestions) e.questionIds = t("An exam can have up to {max} questions.", { max: limits.maxQuestions });
+  if (!Number.isFinite(d.marks.perQuestion) || d.marks.perQuestion < 0.25 || d.marks.perQuestion > 100) e["marks.perQuestion"] = t("Marks per question must be between 0.25 and 100.");
+  for (const [id, m] of Object.entries(d.marks.overrides ?? {})) if (!Number.isFinite(m) || m < 0.25 || m > 100) e[`marks.overrides.${id}`] = t("Between 0.25 and 100.");
+  if (!Number.isFinite(d.negativeMarking.fraction) || d.negativeMarking.fraction < 0 || d.negativeMarking.fraction > 1) e["negativeMarking.fraction"] = t("Use a fraction between 0 and 1.");
+  if (!Number.isInteger(d.durationMinutes) || d.durationMinutes < 1 || d.durationMinutes > limits.maxDurationMinutes) e.durationMinutes = t("Between 1 and {max} minutes.", { max: limits.maxDurationMinutes });
+  if (!Number.isInteger(d.attemptLimit) || d.attemptLimit < 1 || d.attemptLimit > limits.maxAttemptLimit) e.attemptLimit = t("Between 1 and {max}.", { max: limits.maxAttemptLimit });
   const { opensAt, closesAt } = d.window;
-  if (opensAt && closesAt && new Date(closesAt) <= new Date(opensAt)) e["window.closesAt"] = "The closing time must be after the opening time.";
-  if (d.release.mode === "AFTER_CLOSE" && !closesAt) e["release.mode"] = "Releasing when the exam closes needs a closing time.";
+  if (opensAt && closesAt && new Date(closesAt) <= new Date(opensAt)) e["window.closesAt"] = t("The closing time must be after the opening time.");
+  if (d.release.mode === "AFTER_CLOSE" && !closesAt) e["release.mode"] = t("Releasing when the exam closes needs a closing time.");
   if (d.release.mode === "AT_TIME") {
-    if (!d.release.at) e["release.at"] = "Choose when results are released.";
-    else if (closesAt && new Date(d.release.at) < new Date(closesAt)) e["release.at"] = "Results can't be released before the exam closes.";
+    if (!d.release.at) e["release.at"] = t("Choose when results are released.");
+    else if (closesAt && new Date(d.release.at) < new Date(closesAt)) e["release.at"] = t("Results can't be released before the exam closes.");
   }
   if (d.lateStart === "FULL_TIME_ONLY" && closesAt) {
     const start = opensAt ? new Date(opensAt).getTime() : null;
-    if (start !== null && new Date(closesAt).getTime() - start < d.durationMinutes * 60_000) e["window.closesAt"] = "The window is shorter than the exam duration, so nobody could start.";
+    if (start !== null && new Date(closesAt).getTime() - start < d.durationMinutes * 60_000) e["window.closesAt"] = t("The window is shorter than the exam duration, so nobody could start.");
   }
-  if (d.reminderMinutes !== null && (!Number.isInteger(d.reminderMinutes) || d.reminderMinutes < 1 || d.reminderMinutes > 10080)) e.reminderMinutes = "Between 1 minute and 7 days (10080).";
-  if (d.reminderMinutes !== null && !opensAt) e.reminderMinutes = "A reminder needs an opening time.";
+  if (d.reminderMinutes !== null && (!Number.isInteger(d.reminderMinutes) || d.reminderMinutes < 1 || d.reminderMinutes > 10080)) e.reminderMinutes = t("Between 1 minute and 7 days (10080).");
+  if (d.reminderMinutes !== null && !opensAt) e.reminderMinutes = t("A reminder needs an opening time.");
   void mode;
   return e;
 }
@@ -393,9 +388,9 @@ export function crossedMilestone(prevMs: number, nowMs: number): number | null {
   for (const m of MILESTONES) if (prevMs > m && nowMs <= m) return m;
   return null;
 }
-export function milestoneText(ms: number): string {
-  if (ms >= 60_000) return `${ms / 60_000} minute${ms === 60_000 ? "" : "s"} remaining`;
-  return `${ms / 1000} seconds remaining`;
+export function milestoneText(ms: number, t: TFunction = EN.t): string {
+  if (ms >= 60_000) return t("{count, plural, one {# minute remaining} other {# minutes remaining}}", { count: ms / 60_000 });
+  return t("{count, plural, one {# second remaining} other {# seconds remaining}}", { count: ms / 1000 });
 }
 export type TimerTone = "normal" | "warning" | "danger";
 export const timerTone = (ms: number): TimerTone => (ms <= 60_000 ? "danger" : ms <= 300_000 ? "warning" : "normal");
@@ -535,11 +530,11 @@ export class AutosaveQueue {
       this.lastError = null;
     } else if (kind === "rejected") {
       this.status = "error";
-      this.lastError = err instanceof Error ? err.message : "The server didn't accept the save.";
+      this.lastError = err instanceof Error ? err.message : msg("The server didn't accept the save.");
     } else {
       this.status = "offline";
       this.failures += 1;
-      this.lastError = "Couldn't reach the server.";
+      this.lastError = msg("Couldn't reach the server.");
       this.schedule(() => void this.flush(), backoffDelay(this.failures));
     }
     this.emit();
@@ -586,17 +581,18 @@ export class AutosaveQueue {
 // ---------------------------------------------------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------------------------------------------------
-export function describeExamError(code: string, message: string): { title: string; message: string } {
+export function describeExamError(code: string, message: string, t: TFunction = EN.t): { title: string; message: string } {
+  const tm = (m: string) => (m ? t(m) : m);
   switch (code) {
-    case "EXAM_NOT_OPEN": return { title: "This exam hasn't opened yet", message: message || "Come back when the exam opens." };
-    case "EXAM_CLOSED": return { title: "This exam is closed", message: message || "The exam is no longer accepting new attempts." };
-    case "ATTEMPT_LIMIT": return { title: "No attempts left", message: message || "You've used all your attempts for this exam." };
-    case "ATTEMPT_EXPIRED": return { title: "Time is up", message: message || "This attempt has ended. Answers saved before the deadline were kept." };
-    case "NOT_ELIGIBLE": return { title: "You can't take this exam", message: message || "You're not eligible for this exam." };
-    case "RATE_LIMITED": return { title: "Slow down a little", message: "Too many requests. Wait a moment and try again." };
-    case "CONFLICT": return { title: "That changed in the meantime", message: message || "Reload and try again." };
-    case "NETWORK": return { title: "Connection problem", message };
-    default: return { title: "Something went wrong", message: message || "Please try again." };
+    case "EXAM_NOT_OPEN": return { title: t("This exam hasn't opened yet"), message: tm(message) || t("Come back when the exam opens.") };
+    case "EXAM_CLOSED": return { title: t("This exam is closed"), message: tm(message) || t("The exam is no longer accepting new attempts.") };
+    case "ATTEMPT_LIMIT": return { title: t("No attempts left"), message: tm(message) || t("You've used all your attempts for this exam.") };
+    case "ATTEMPT_EXPIRED": return { title: t("Time is up"), message: tm(message) || t("This attempt has ended. Answers saved before the deadline were kept.") };
+    case "NOT_ELIGIBLE": return { title: t("You can't take this exam"), message: tm(message) || t("You're not eligible for this exam.") };
+    case "RATE_LIMITED": return { title: t("Slow down a little"), message: t("Too many requests. Wait a moment and try again.") };
+    case "CONFLICT": return { title: t("That changed in the meantime"), message: tm(message) || t("Reload and try again.") };
+    case "NETWORK": return { title: t("Connection problem"), message: tm(message) };
+    default: return { title: t("Something went wrong"), message: tm(message) || t("Please try again.") };
   }
 }
 
@@ -634,17 +630,20 @@ export function factsFromTakeView(e: ExamTakeView): RuleFacts {
   };
 }
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-export function rulesInWords(f: RuleFacts): string[] {
+export function rulesInWords(f: RuleFacts, i18n: I18n = EN): string[] {
+  const { t, format } = i18n;
   const out: string[] = [];
-  if (f.questionCount !== null) out.push(`${plural(f.questionCount, "question")}${f.totalMarks !== null ? `, ${formatMarks(f.totalMarks)} marks in total` : ""}.`);
-  if (f.durationMinutes !== null) out.push(`You get ${formatDuration(f.durationMinutes)} once you start. The clock is kept by the server and keeps running if you close the page.`);
-  if (f.attemptLimit !== null) out.push(f.attemptLimit === 1 ? "One attempt." : `Up to ${f.attemptLimit} attempts; your best result counts for rankings.`);
-  if (f.opensAt) out.push(`Opens ${formatDateTime(f.opensAt)}.`);
-  if (f.closesAt) out.push(`Closes ${formatDateTime(f.closesAt)}${f.lateStart === "CAP_AT_CLOSE" ? " — if you start late, your time is cut short at closing." : f.lateStart === "FULL_TIME_ONLY" ? " — you can only start while a full duration is still left." : "."}`);
-  if (f.negativeFraction !== null) out.push(f.negativeFraction > 0 ? `Wrong answers lose ${formatMarks(Math.round(f.negativeFraction * 10000) / 100)}% of the question's marks. Unanswered questions score 0.` : "No negative marking: a wrong answer scores 0.");
-  if (f.shuffleQuestions || f.shuffleOptions) out.push(`${[f.shuffleQuestions ? "Questions" : null, f.shuffleOptions ? "answer options" : null].filter(Boolean).join(" and ")} appear in a different order for each person.`);
-  if (f.reviewPolicy) out.push(REVIEW_POLICY_TEXT[f.reviewPolicy].hint);
-  if (f.release) out.push(f.release.mode === "IMMEDIATE" ? "Results appear as soon as you submit." : f.release.mode === "AFTER_CLOSE" ? "Results are released for everyone after the exam closes." : `Results are released ${f.release.at ? formatDateTime(f.release.at) : "at a set time"}.`);
+  if (f.questionCount !== null) out.push(f.totalMarks !== null ? t("{count, plural, one {# question} other {# questions}}, {marks} marks in total.", { count: f.questionCount, marks: formatMarks(f.totalMarks, i18n) }) : t("{count, plural, one {# question} other {# questions}}.", { count: f.questionCount }));
+  if (f.durationMinutes !== null) out.push(t("You get {duration} once you start. The clock is kept by the server and keeps running if you close the page.", { duration: formatDuration(f.durationMinutes, i18n) }));
+  if (f.attemptLimit !== null) out.push(f.attemptLimit === 1 ? t("One attempt.") : t("Up to {count} attempts; your best result counts for rankings.", { count: f.attemptLimit }));
+  if (f.opensAt) out.push(t("Opens {when}.", { when: format.dateTime(f.opensAt) }));
+  if (f.closesAt) {
+    const when = format.dateTime(f.closesAt);
+    out.push(f.lateStart === "CAP_AT_CLOSE" ? t("Closes {when} — if you start late, your time is cut short at closing.", { when }) : f.lateStart === "FULL_TIME_ONLY" ? t("Closes {when} — you can only start while a full duration is still left.", { when }) : t("Closes {when}.", { when }));
+  }
+  if (f.negativeFraction !== null) out.push(f.negativeFraction > 0 ? t("Wrong answers lose {percent}% of the question's marks. Unanswered questions score 0.", { percent: formatMarks(Math.round(f.negativeFraction * 10000) / 100, i18n) }) : t("No negative marking: a wrong answer scores 0."));
+  if (f.shuffleQuestions || f.shuffleOptions) out.push(f.shuffleQuestions && f.shuffleOptions ? t("Questions and answer options appear in a different order for each person.") : f.shuffleQuestions ? t("Questions appear in a different order for each person.") : t("Answer options appear in a different order for each person."));
+  if (f.reviewPolicy) out.push(t(REVIEW_POLICY_TEXT[f.reviewPolicy].hint));
+  if (f.release) out.push(f.release.mode === "IMMEDIATE" ? t("Results appear as soon as you submit.") : f.release.mode === "AFTER_CLOSE" ? t("Results are released for everyone after the exam closes.") : f.release.at ? t("Results are released {when}.", { when: format.dateTime(f.release.at) }) : t("Results are released at a set time."));
   return out;
 }

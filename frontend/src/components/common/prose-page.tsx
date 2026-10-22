@@ -1,3 +1,4 @@
+import { getT } from "@/lib/i18n/server";
 export function ProsePage({ title, updated, children }: { title: string; updated?: string; children: React.ReactNode }) {
   return (
     <article className="mx-auto max-w-3xl px-4 py-14 sm:px-6">
@@ -10,10 +11,11 @@ export function ProsePage({ title, updated, children }: { title: string; updated
   );
 }
 
-export function DraftNotice() {
+export async function DraftNotice() {
+  const t = await getT();
   return (
     <p className="rounded-xl border border-warning/40 bg-warning-soft p-3 text-sm">
-      <strong>Draft template.</strong> This text describes the current foundation build and must be reviewed by the operator (and legal counsel where required) before a public launch.
+      <strong>{t("Draft template.")}</strong> This text describes the current foundation build and must be reviewed by the operator (and legal counsel where required) before a public launch.
     </p>
   );
 }

@@ -9,6 +9,7 @@ import {
   type CqMode, type CqSettings, type CqStructure, type DifficultySetting, type FieldErrors, type Grounding, type Language, type ModelRef, type QuestionLimitsResponse,
 } from "@/lib/questions";
 import { cn } from "@/lib/utils";
+import type { Prefill } from "@/lib/prefill";
 import { Field, FieldError, NumberInput, Segmented } from "./fields";
 import { GenerationError, GenerationProgress, RecentRuns } from "./generation-ui";
 import { ModelField } from "./model-field";
@@ -58,10 +59,14 @@ export function toCqSettings(f: Form): CqSettings {
   };
 }
 
-export function CqWorkspace({ limitsResponse }: { limitsResponse: QuestionLimitsResponse }) {
+export function CqWorkspace({ limitsResponse, prefill }: { limitsResponse: QuestionLimitsResponse; prefill?: Prefill }) {
   const limits = resolveLimits(limitsResponse);
   const gen = useGeneration("CQ");
-  const [form, setForm] = useState<Form>(INITIAL);
+  const [form, setForm] = useState<Form>(() =>
+    prefill
+      ? { ...INITIAL, sources: { ...INITIAL.sources, topic: prefill.topic, subject: prefill.subject }, groundingChoice: prefill.grounding }
+      : INITIAL,
+  );
   const [shown, setShown] = useState(false);
   const [last, setLast] = useState<CqSettings | null>(null);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));

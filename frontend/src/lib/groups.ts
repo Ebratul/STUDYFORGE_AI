@@ -1,9 +1,11 @@
 import type { ApiError } from "@/lib/api";
+import { msg, type TFunction } from "@/lib/i18n/translate";
+import { EN } from "@/lib/format-locale";
 
 /** Types and pure helpers for study groups (docs/PART4_SPEC.md §11). The server is the authority; role helpers here only decide what to *show*. */
 
 export type GroupRole = "OWNER" | "ADMIN" | "MEMBER";
-export const ROLE_LABEL: Record<GroupRole, string> = { OWNER: "Owner", ADMIN: "Admin", MEMBER: "Member" };
+export const ROLE_LABEL: Record<GroupRole, string> = { OWNER: msg("Owner"), ADMIN: msg("Admin"), MEMBER: msg("Member") };
 
 export type ExamParticipation = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "TIMED_OUT" | "MISSED";
 /** What the group exam list reports for the caller: a participation status, or a reason they can't take it. */
@@ -136,10 +138,10 @@ export function canRemoveMember(actor: GroupRole, target: GroupRole, isSelf: boo
 }
 
 // ----------------------------------------------------------------------------------------------- invites
-export const INVITE_STATUS_LABEL: Record<InviteStatus, string> = { ACTIVE: "Active", EXPIRED: "Expired", REVOKED: "Revoked", USED_UP: "Used up" };
+export const INVITE_STATUS_LABEL: Record<InviteStatus, string> = { ACTIVE: msg("Active"), EXPIRED: msg("Expired"), REVOKED: msg("Revoked"), USED_UP: msg("Used up") };
 
-export function inviteUsage(i: Pick<InviteView, "useCount" | "maxUses">): string {
-  return `${i.useCount} of ${i.maxUses} ${i.maxUses === 1 ? "use" : "uses"}`;
+export function inviteUsage(i: Pick<InviteView, "useCount" | "maxUses">, t: TFunction = EN.t): string {
+  return t("{used} of {count, plural, one {# use} other {# uses}}", { used: i.useCount, count: i.maxUses });
 }
 
 /** Codes arrive grouped with dashes (kept as-is); an ungrouped code is split in blocks of four. Copy always uses the code exactly as issued. */
@@ -167,12 +169,12 @@ export function inviteLink(code: string, origin: string): string {
 }
 
 export const TTL_PRESETS: { hours: number; label: string }[] = [
-  { hours: 1, label: "1 hour" }, { hours: 24, label: "1 day" }, { hours: 168, label: "7 days" }, { hours: 720, label: "30 days" },
+  { hours: 1, label: msg("1 hour") }, { hours: 24, label: msg("1 day") }, { hours: 168, label: msg("7 days") }, { hours: 720, label: msg("30 days") },
 ];
 export const ttlOptions = (max: number) => TTL_PRESETS.filter((p) => p.hours <= max);
 
 export const PARTICIPATION_LABEL: Record<MyExamStatus, string> = {
-  NOT_STARTED: "Not started", IN_PROGRESS: "In progress", SUBMITTED: "Submitted", TIMED_OUT: "Timed out", MISSED: "Missed", AUTHOR: "You published this", NOT_ELIGIBLE: "Not eligible",
+  NOT_STARTED: msg("Not started"), IN_PROGRESS: msg("In progress"), SUBMITTED: msg("Submitted"), TIMED_OUT: msg("Timed out"), MISSED: msg("Missed"), AUTHOR: msg("You published this"), NOT_ELIGIBLE: msg("Not eligible"),
 };
 
 export const examLink = (id: string) => `/exams/${encodeURIComponent(id)}`;
@@ -185,17 +187,17 @@ export function groupFieldErrors(e: ApiError): Record<string, string> {
 }
 
 /** Plain-language message for a failed group/invite request. Raw server text is only used where it is already user-safe. */
-export function describeGroupError(e: { code: string; message: string; details?: Record<string, unknown> }, ctx: "join" | "generic" = "generic"): string {
+export function describeGroupError(e: { code: string; message: string; details?: Record<string, unknown> }, ctx: "join" | "generic" = "generic", t: TFunction = EN.t): string {
   const retry = typeof e.details?.retryAfterSec === "number" ? e.details.retryAfterSec : null;
   switch (e.code) {
-    case "INVALID_INVITE": return "This invitation isn't valid. It may have expired, been revoked, already been used up, or be meant for someone else. Ask the group owner for a new one.";
-    case "GROUP_FULL": return "This group is full, so you can't join right now. Ask the owner to make room.";
-    case "RATE_LIMITED": return retry ? `Too many attempts. Please wait about ${retry >= 90 ? `${Math.ceil(retry / 60)} minutes` : `${retry} seconds`} and try again.` : "Too many attempts. Please wait a while and try again.";
-    case "NOT_ELIGIBLE": return "You don't have permission to do that in this group.";
-    case "NOT_FOUND": return ctx === "join" ? "We couldn't find that invitation." : "We couldn't find that. It may have been removed.";
-    case "UNAUTHENTICATED": return "Your session has ended. Please sign in again.";
-    case "NETWORK": return e.message;
-    case "VALIDATION": return e.message || "Some details are invalid.";
-    default: return e.message || "Something went wrong. Please try again.";
+    case "INVALID_INVITE": return t("This invitation isn't valid. It may have expired, been revoked, already been used up, or be meant for someone else. Ask the group owner for a new one.");
+    case "GROUP_FULL": return t("This group is full, so you can't join right now. Ask the owner to make room.");
+    case "RATE_LIMITED": return retry ? (retry >= 90 ? t("Too many attempts. Please wait about {count} minutes and try again.", { count: Math.ceil(retry / 60) }) : t("Too many attempts. Please wait about {count} seconds and try again.", { count: retry })) : t("Too many attempts. Please wait a while and try again.");
+    case "NOT_ELIGIBLE": return t("You don't have permission to do that in this group.");
+    case "NOT_FOUND": return ctx === "join" ? t("We couldn't find that invitation.") : t("We couldn't find that. It may have been removed.");
+    case "UNAUTHENTICATED": return t("Your session has ended. Please sign in again.");
+    case "NETWORK": return t(e.message);
+    case "VALIDATION": return t(e.message || "Some details are invalid.");
+    default: return t(e.message || "Something went wrong. Please try again.");
   }
 }

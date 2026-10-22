@@ -14,7 +14,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "i18n:check": "node scripts/i18n-extract.mjs",
+    "i18n:write": "node scripts/i18n-extract.mjs --write"
   },
   "dependencies": {
     "@hookform/resolvers": "^6.0.0",

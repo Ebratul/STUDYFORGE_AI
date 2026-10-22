@@ -3,12 +3,14 @@
 import { Clock } from "lucide-react";
 import { formatClock, timerTone } from "@/lib/exams";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n/client";
 
 /**
  * Circular countdown. It only DISPLAYS the value handed to it (derived from the server's remainingMs + monotonic time);
  * it has no clock of its own. The ring is decorative; the numbers carry the meaning.
  */
 export function ExamTimer({ remainingMs, totalMs, className }: { remainingMs: number; totalMs: number; className?: string }) {
+  const t = useT();
   const tone = timerTone(remainingMs);
   const r = 26;
   const c = 2 * Math.PI * r;
@@ -26,11 +28,11 @@ export function ExamTimer({ remainingMs, totalMs, className }: { remainingMs: nu
         <Clock className={cn("absolute inset-0 m-auto size-5", tone === "danger" ? "text-destructive" : "text-muted-foreground")} />
       </div>
       <div>
-        <p className="text-xs text-muted-foreground">Time left</p>
+        <p className="text-xs text-muted-foreground">{t("Time left")}</p>
         <p
           role="timer"
           aria-live="off"
-          aria-label={`Time left: ${formatClock(remainingMs)}`}
+          aria-label={t("Time left: {time}", { time: formatClock(remainingMs) })}
           data-testid="exam-timer"
           className={cn("font-mono text-2xl font-semibold tabular-nums leading-none", tone === "danger" && "text-destructive", tone === "warning" && "text-amber-700 dark:text-amber-300")}
         >

@@ -218,3 +218,13 @@
   html.sf-printing .sf-key h2 { font-size: 14pt; }
   @page { margin: 16mm; }
 }
+
+/* Bangla: Noto Sans Bengali first, roomier line height so conjuncts and vowel signs (ি ে ৃ) are never clipped, no letter-spacing/uppercase tricks. */
+:lang(bn) {
+  font-family: var(--font-noto-bengali), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.7;
+  letter-spacing: 0;
+}
+:lang(bn) .uppercase { text-transform: none; letter-spacing: 0; }
+:lang(bn) h1, :lang(bn) h2, :lang(bn) h3 { line-height: 1.4; }
+:lang(bn) button, :lang(bn) input, :lang(bn) select, :lang(bn) textarea, :lang(bn) [role="tab"] { line-height: 1.5; }
