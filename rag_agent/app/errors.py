@@ -22,6 +22,7 @@ class ErrorCode(StrEnum):
     STRUCTURED_OUTPUT_FAILED = "STRUCTURED_OUTPUT_FAILED"
     EMBEDDING_DIMENSION_MISMATCH = "EMBEDDING_DIMENSION_MISMATCH"
     BUSY = "BUSY"
+    GENERATION_FAILED = "GENERATION_FAILED"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
     INTERNAL = "INTERNAL"
 
@@ -42,6 +43,7 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.STRUCTURED_OUTPUT_FAILED: 502,
     ErrorCode.EMBEDDING_DIMENSION_MISMATCH: 422,
     ErrorCode.BUSY: 429,
+    ErrorCode.GENERATION_FAILED: 502,
     ErrorCode.FILE_TOO_LARGE: 413,
     ErrorCode.INTERNAL: 500,
 }
@@ -63,6 +65,7 @@ SAFE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.STRUCTURED_OUTPUT_FAILED: "The model did not return a valid structured answer.",
     ErrorCode.EMBEDDING_DIMENSION_MISMATCH: "The selected embedding model does not produce 1536-dimensional vectors.",
     ErrorCode.BUSY: "The service is busy. Please retry shortly.",
+    ErrorCode.GENERATION_FAILED: "The questions could not be generated. Please try again.",
     ErrorCode.FILE_TOO_LARGE: "The uploaded file is too large.",
     ErrorCode.INTERNAL: "An internal error occurred.",
 }
@@ -86,8 +89,10 @@ class AppError(Exception):
         retryable: bool | None = None,
         retry_after_seconds: int | None = None,
         http_status: int | None = None,
+        reason: str | None = None,
     ) -> None:
         self.code = ErrorCode(code)
+        self.reason = reason  # GENERATION_FAILED only: INVALID_OUTPUT | NO_VALID_QUESTIONS | INSUFFICIENT_SOURCES
         self.message = message or SAFE_MESSAGES[self.code]
         self.retryable = (self.code in DEFAULT_RETRYABLE) if retryable is None else retryable
         self.retry_after_seconds = retry_after_seconds
@@ -98,6 +103,8 @@ class AppError(Exception):
         out: dict[str, Any] = {"code": self.code.value, "message": self.message, "retryable": self.retryable}
         if self.retry_after_seconds is not None:
             out["retry_after_seconds"] = self.retry_after_seconds
+        if self.reason is not None:
+            out["reason"] = self.reason
         return out
 
     def body(self) -> dict[str, Any]:

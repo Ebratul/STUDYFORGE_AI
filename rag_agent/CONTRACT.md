@@ -283,3 +283,16 @@ and build its schema by executing `../backend/prisma/migrations/*/migration.sql`
 `MAX_UPLOAD_BYTES`, `MAX_PAGES`, `MAX_TEXT_CHARS`, `PARSE_TIMEOUT_SECONDS`, `CHUNK_TARGET_CHARS`, `CHUNK_OVERLAP_CHARS`, `PROVIDER_TIMEOUT_SECONDS`, `MAX_CHAT_CHARS`,
 `RETRIEVAL_TOP_K`, `RETRIEVAL_MIN_SIMILARITY`, `RETRIEVAL_MAX_CONTEXT_CHARS`, `MAX_CONCURRENT_INGESTS`, `OCR_ENABLED`, `LOG_LEVEL`,
 `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_INCLUDE_CONTENT`.
+
+## 9. Generation (Part 3)
+
+Normative description: `backend/docs/PART3_SPEC.md` §7 (request/response shapes, workflow, mock behaviours §7.1). Everything in §0 (auth, key handling,
+no provider fallback, error shape, logging) applies unchanged. Implementation map: `app/api/generate.py`, `app/graphs/generation.py`,
+`app/generation/{schemas,validate,sources,prompting,text}.py`, prompts in `app/prompts.py`, retrieval helper `sample_chunks` in `app/generation/sources.py`
+(same isolation as §5), mock behaviours in `app/providers/mock.py`.
+
+* New error code `GENERATION_FAILED` (generation errors surface after streaming has started, so it appears as an SSE `error` event, never as an HTTP status) with `reason` ∈
+  `INVALID_OUTPUT | NO_VALID_QUESTIONS | INSUFFICIENT_SOURCES`. `AppError.to_dict()` now includes `reason` when set.
+* Recorded deviations from the spec text: see "Part 3 (generation) deviations and limits" in `README.md` (extra SPEC fields, GENERAL needs a topic,
+  PREFERRED with no usable material fails, call-count accounting, soft/hard deadlines, MCQ-only cross-check, marks always taken from `part_marks`).
+* Tests: `tests/test_generation_{validate,graph,sources,api}.py` (+ `gen_utils.py`); all use the mock provider or scripted fakes.

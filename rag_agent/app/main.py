@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api import chat, health, ingest, providers
+from app.api import chat, generate, health, ingest, providers
 from app.config import Settings, load_settings_or_exit
 from app.db import make_pool
 from app.errors import AppError, ErrorCode
@@ -122,6 +122,7 @@ def create_app(settings: Settings | None = None, *, registry: ProviderRegistry |
     app.include_router(providers.router)
     app.include_router(ingest.router)
     app.include_router(chat.router)
+    app.include_router(generate.router)
     return app
 
 

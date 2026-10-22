@@ -50,6 +50,7 @@ not end in `_rag_test`. Never run `prisma migrate` for this service: the schema 
 * `GET /v1/providers`; `POST /v1/providers/test` (always HTTP 200); `POST /v1/providers/models`.
 * `POST /v1/ingest` (multipart `file` + `meta`; response `application/x-ndjson`).
 * `POST /v1/chat/stream` (SSE: `meta`, `status`, `delta`, `citations`, `final` | `error`).
+* `POST /v1/generate/mcq`, `POST /v1/generate/cq` (Part 3; SSE: `meta`, `status`, `result` | `error`). Nothing is persisted here; see CONTRACT §9 and `backend/docs/PART3_SPEC.md` §7.
 
 Errors use `{"error":{"code","message","retryable","retry_after_seconds?"}}`; messages are fixed safe strings (no upstream bodies, no keys).
 
@@ -67,6 +68,10 @@ app/retrieval/search.py  ONE parameterised hybrid SQL (vector + ts_rank, RRF k=6
 app/graphs/            state, document_only (LangGraph), general (LangGraph), runner (SSE events, cancellation)
 app/prompts.py         constant system prompts + canary, delimiter/neutralisation; app/citations.py deterministic verification
 app/streaming.py       disconnect-aware streaming; app/tracing.py LangSmith policy
+app/generation/        Part 3: schemas (request + provider-facing output), validate (deterministic question checks), sources (pasted-text pool,
+                       coverage sampling SQL, batch selection), prompting (SPEC block + delimited sources), text helpers
+app/graphs/generation.py  LangGraph workflow: prepare -> gate -> [next_batch -> generate -> validate -> regenerate<=2 -> cross_check]* -> finalize
+app/api/generate.py    the two SSE endpoints
 ```
 
 Policy A (`DOCUMENT_ONLY`): `validate → retrieve → gate → generate → verify → (repair once) → finalize | fallback`. Gate, verification and
@@ -76,6 +81,19 @@ fallback are plain code; the fallback makes **zero** LLM calls. Unverified model
 Ingestion: content sniffing (extension must agree with magic bytes/structure) → parse in a **separate process** (`python -I worker.py`; applies
 `RLIMIT_AS/CPU/FSIZE/NOFILE` to itself, empty environment, killed on wall-clock timeout, bounded stdout) → chunk → embed (batches ≤ 64) →
 one transaction: lock document row, delete same version, insert, delete other versions, set `processingVersion`.
+
+### Question generation (Part 3)
+
+`POST /v1/generate/{mcq,cq}` turns pasted text, authorised documents and/or a topic into validated question drafts (snake_case JSON, ids `g_…`).
+Per run: source pool (pasted text → pseudo-chunks `paste:<n>`; documents → `search_chunks` for a topic, or the new `sample_chunks` coverage sample when
+there is no topic; both are owner/document/current-version/READY scoped) → deterministic gate (`SOURCE_ONLY`/`SOURCE_PREFERRED` with an empty pool ⇒
+`GENERATION_FAILED/INSUFFICIENT_SOURCES`, **zero** LLM calls) → batches (`limits.batch_size`) of structured generation → deterministic validation
+(schema, option/key integrity, normalised-exact + Jaccard ≥ 0.8 duplicates across batches and `avoid`, language script check, size caps, verbatim
+evidence quotes checked against the text the model actually saw, grounding-policy filtering, CQ marks/parts arithmetic, explanation-vs-key and
+evidence-overlap review flags, key/canary leak filter) → ≤ `max_regen_per_batch` (2) regenerations for the shortfall → one independent
+**solver** call per MCQ batch (`SOLVER_DISAGREES`, flag only) → result. Hard bounds: `max_llm_calls` (16), soft deadline at 85 % of `timeout_seconds`
+(partial result), per-call deadline. Mock-provider markers for tests are listed in `backend/docs/PART3_SPEC.md` §7.1.
+AI-generated questions are never claimed to be correct: `source_support` says only whether a quote was found verbatim in an authorised source.
 
 ### PDF library choice: `pypdf`
 BSD-licensed, pure Python (no native code in the process that parses hostile input), actively maintained, enough for text-layer extraction with
@@ -140,3 +158,18 @@ See the final report of the implementation task; the authoritative list is kept 
 * Parser isolation is process + rlimit based (no seccomp/namespace sandbox). DOCX is parsed with python-docx/lxml (entities are not resolved).
 * Scanned PDFs are not OCR'd; encrypted PDFs are rejected rather than decrypted.
 * Streaming latency: GENERAL output is delayed by up to ~30 characters by the leak-guard holdback.
+
+### Part 3 (generation) deviations and limits
+* The SPEC block in the generation prompt also carries `topic`, `grounding`, `start_index`, `total_count` and `fix` (fixed reason codes), beyond the
+  fields listed in the spec; it never carries credentials. The topic is user-supplied text and is neutralised like any untrusted text.
+* `GENERAL` grounding requires a topic (the spec only lists "no sources"); `SOURCE_PREFERRED` with no usable material at run time fails with
+  `INSUFFICIENT_SOURCES` rather than silently turning into model-only generation.
+* `max_llm_calls` counts every `generate_structured` call, +1 when the adapter reports `repaired` and +2 for a call that ended in
+  `STRUCTURED_OUTPUT_FAILED` (the adapter always spent a repair attempt). Other adapter-internal retries (429/5xx backoff) are not counted.
+* A soft deadline (85 % of `timeout_seconds`) stops new batches and returns what exists with `FEWER_THAN_REQUESTED`; a hard deadline with nothing
+  accepted is `PROVIDER_TIMEOUT`.
+* The answer-key cross-check runs for MCQ only. A solver call that fails (anything but an auth error) yields warning `CROSS_CHECK_SKIPPED`; it never
+  deletes a question. The explanation/evidence heuristics only flag.
+* Model-provided CQ marks are always replaced by the requested `part_marks`; a difference adds `MARKS_ADJUSTED`.
+* Quality of questions from a real model, and the behaviour of real providers' native structured output on these larger schemas, are **not verified**
+  (no live provider was ever called); tests use the mock provider and scripted fakes.
