@@ -52,6 +52,8 @@ not end in `_rag_test`. Never run `prisma migrate` for this service: the schema 
 * `POST /v1/chat/stream` (SSE: `meta`, `status`, `delta`, `citations`, `final` | `error`).
 * `POST /v1/generate/mcq`, `POST /v1/generate/cq` (Part 3; SSE: `meta`, `status`, `result` | `error`). Nothing is persisted here; see CONTRACT §9 and `backend/docs/PART3_SPEC.md` §7.
 
+* `POST /v1/analyze/result`, `POST /v1/analyze/plan` (Part 5; JSON `{result, usage, warnings}`). Post-exam feedback and improvement plans from the backend-supplied, verified context; see CONTRACT §10 and `backend/docs/PART5_SPEC.md` §3–§6.
+
 Errors use `{"error":{"code","message","retryable","retry_after_seconds?"}}`; messages are fixed safe strings (no upstream bodies, no keys).
 
 ## Architecture
@@ -94,6 +96,21 @@ evidence-overlap review flags, key/canary leak filter) → ≤ `max_regen_per_ba
 **solver** call per MCQ batch (`SOLVER_DISAGREES`, flag only) → result. Hard bounds: `max_llm_calls` (16), soft deadline at 85 % of `timeout_seconds`
 (partial result), per-call deadline. Mock-provider markers for tests are listed in `backend/docs/PART3_SPEC.md` §7.1.
 AI-generated questions are never claimed to be correct: `source_support` says only whether a quote was found verbatim in an authorised source.
+
+### Result analysis and study plans (Part 5)
+
+`POST /v1/analyze/{result,plan}` run a bounded LangGraph workflow: `validate → prepare → generate (structured) → verify → [repair once] → finalize | error`
+(`app/graphs/analysis.py`, `app/analysis/`). The backend sends a *minimal, verified* context (topic statistics, counts, bands, a few incorrect items, and the
+strong/weak topic lists it computed); this service never sees user ids' data beyond that, never touches the database, and never changes or recomputes a score.
+**Verification is deterministic code** (`app/analysis/verify.py`): topics must exist in the context; strengths/weaknesses only use the supplied strong/weak lists
+and a weakness must quote that topic's own numbers; every number in the text must be derivable from the context (Bangla digits normalised; percentages as exact /
+1-decimal / integer round-half-up; digits inside topic names are ignored; advice quantities such as "15 minutes" are allowed in step text only); no
+mastery / trend / "improving" claims (small EN+BN phrase list) unless the backend says `data_level == BASED_ON_HISTORY`, and a caveat is required otherwise; no links,
+markup or URLs; length caps; ≤5 steps from a fixed enum; language script check; key/canary leak filter. One repair round with the rejection reason *codes* (never the
+rejected text), then `GENERATION_FAILED` with reason `UNGROUNDED_OUTPUT` or `INVALID_OUTPUT`. Data goes only in the delimited **user** turn, every string neutralised
+(stems, explanations, topics are untrusted). Limits of these defences: the checks cannot prove that prose is wise or fair, a model can still phrase true numbers
+misleadingly, and the phrase list is a heuristic. Mock-provider markers (in `exam.title` or a topic): `[[fail]]`, `[[rate-limit]]`, `[[bad-json-once]]`,
+`[[bad-json-always]]`, `[[ungrounded]]`, `[[slow]]`.
 
 ### PDF library choice: `pypdf`
 BSD-licensed, pure Python (no native code in the process that parses hostile input), actively maintained, enough for text-layer extraction with
@@ -173,3 +190,10 @@ See the final report of the implementation task; the authoritative list is kept 
 * Model-provided CQ marks are always replaced by the requested `part_marks`; a difference adds `MARKS_ADJUSTED`.
 * Quality of questions from a real model, and the behaviour of real providers' native structured output on these larger schemas, are **not verified**
   (no live provider was ever called); tests use the mock provider and scripted fakes.
+
+### Part 5 (analysis) deviations and limits
+* The request `context` also carries `strong_topics`, `weak_topics` and (for plans) `data_level`/`results`, as PART5_SPEC §6 requires the backend to compute them; `data_level` accepts only `INITIAL` or `BASED_ON_HISTORY` here (`NONE` means the backend never calls).
+* Sizes are hard caps (422): ≤40 topics, ≤25 incorrect items, stems ≤300 and other texts ≤400 chars, whole context ≤12 000 characters. The cap on incorrect items the backend uses is lower (`ANALYSIS_MAX_INCORRECT_ITEMS`, 15).
+* `llm_calls` counts +1 per provider round, +1 when the adapter reports a repair and +2 for a call that ended in `STRUCTURED_OUTPUT_FAILED` (same accounting as generation). At most two rounds happen per request; the whole run has a hard deadline of `min(150 s, 2 × PROVIDER_TIMEOUT_SECONDS + 5 s)`.
+* A leaked key/canary discards the answer immediately (no repair round) and is reported as `INVALID_OUTPUT`.
+* Verification is a *grounding* check, not a quality check: the usefulness and tone of feedback from a real model are **not verified** (no live provider was ever called); tests use the mock provider and scripted fakes. The banned-phrase list is small and heuristic (EN/BN only).

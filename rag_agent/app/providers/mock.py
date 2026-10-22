@@ -9,6 +9,7 @@ import math
 import re
 import unicodedata
 from collections.abc import AsyncIterator
+from decimal import Decimal
 
 from pydantic import BaseModel, SecretStr
 
@@ -33,6 +34,7 @@ DIM = 1536
 _SRC_BLOCK = re.compile(r"<<<SOURCES:([A-Za-z0-9]+)>>>(.*?)<<<END:\1>>>", re.S)
 _SRC_SPLIT = re.compile(r"(?m)^\[(\d+)\] \(([^\n]*)\)\n")
 _SPEC_BLOCK = re.compile(r"<<<SPEC:([A-Za-z0-9]+)>>>(.*?)<<<ENDSPEC:\1>>>", re.S)
+_DATA_BLOCK = re.compile(r"<<<DATA:([A-Za-z0-9]+)>>>(.*?)<<<ENDDATA:\1>>>", re.S)
 _Q_BLOCK = re.compile(r"<<<QUESTIONS:([A-Za-z0-9]+)>>>(.*?)<<<ENDQUESTIONS:\1>>>", re.S)
 
 
@@ -108,6 +110,9 @@ _BN_FRAMES = ["{a} বিষয়ে নিচের কোনটি সঠি�
 _EN_PARTS = ["What is meant by {a}?", "Explain how {b} relates to {a}.", "Apply the idea of {a} to the situation described.",
              "Evaluate the importance of {b} for {t} and justify your view."]
 _BN_PARTS = ["{a} কী?", "{b} কেন গুরুত্বপূর্ণ ব্যাখ্যা করো।", "উদ্দীপকের আলোকে {a} প্রয়োগ করো।", "{b} এর গুরুত্ব বিশ্লেষণ করে তোমার মতামত দাও।"]
+
+
+_BN_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
 
 
 def _bn_digit(n: int) -> str:
@@ -211,6 +216,11 @@ class MockProvider:
                 for _ in range(133):  # ~20 s, so a client can Stop
                     await asyncio.sleep(0.15)
             payload = self._generation(schema.__name__, text)
+        elif schema.__name__ in ("LlmAnalysis", "LlmPlan"):
+            if "[[slow]]" in text:
+                for _ in range(133):  # ~20 s, so a client can cancel
+                    await asyncio.sleep(0.15)
+            payload = self._analysis(schema.__name__, text)
         else:
             try:
                 payload = schema().model_dump()  # type: ignore[call-arg]
@@ -410,6 +420,84 @@ class MockProvider:
                 pick = next(lab for lab, _ in opts if lab != pick)
             answers.append({"index": number, "label": pick})
         return {"answers": answers}
+
+    # ---------------------------------------------------------------- Part 5: result analysis / study plan (PART5_SPEC §6)
+    @staticmethod
+    def _num(bp: int, bn: bool) -> str:
+        text = format(Decimal(bp) / 100, "f")
+        text = text.rstrip("0").rstrip(".") if "." in text else text
+        return text.translate(_BN_DIGITS) if bn else text
+
+    def _analysis(self, name: str, text: str) -> dict:
+        """Deterministic, GROUNDED output built from the DATA block (topic names and counts quoted exactly); markers as in the spec."""
+        spec = self._spec(text)
+        attempt = int(spec.get("attempt", 0))
+        if "[[bad-json-always]]" in text or ("[[bad-json-once]]" in text and attempt == 0):
+            raise ProviderError(ErrorCode.STRUCTURED_OUTPUT_FAILED)
+        m = _DATA_BLOCK.search(text)
+        if not m:
+            raise ProviderError(ErrorCode.STRUCTURED_OUTPUT_FAILED)
+        try:
+            data = json.loads(m.group(2))
+        except ValueError:
+            raise ProviderError(ErrorCode.STRUCTURED_OUTPUT_FAILED) from None
+        bn = data.get("language") == "bn"
+        d = (lambda n: str(n).translate(_BN_DIGITS)) if bn else str
+        topics = {t["topic"]: t for t in data.get("topics", [])}
+        strong, weak = [t for t in data.get("strong_topics", []) if t in topics], [t for t in data.get("weak_topics", []) if t in topics]
+        level = spec.get("data_level", "INITIAL")
+        ungrounded = "[[ungrounded]]" in text
+
+        def counts(t: dict) -> str:
+            return f"{d(t['correct'])} of {d(t['questions'])} correct" if not bn else f"{d(t['questions'])} টির মধ্যে {d(t['correct'])} টি সঠিক"
+
+        caveat = ("This is an initial suggestion based on limited results, so treat it as a starting point." if not bn
+                  else "এটি সীমিত ফলাফলের উপর ভিত্তি করে একটি প্রাথমিক পরামর্শ, তাই একে শুরুর দিকনির্দেশ হিসেবে দেখো।") if level != "BASED_ON_HISTORY" else (
+                  "Topics with only a few questions give a less reliable picture." if not bn else "যেসব বিষয়ে প্রশ্ন কম, সেখানে চিত্রটি কম নির্ভরযোগ্য।")
+
+        if name == "LlmPlan":
+            lowest = sorted(topics.values(), key=lambda t: (t["accuracy_bp"], t["topic"]))[:1]
+            focus_topics = weak[:3] or [t["topic"] for t in lowest]
+            focus = [{"topic": t, "reason": f"{counts(topics[t])} ({self._num(topics[t]['accuracy_bp'], bn)}%)." if not bn else f"{counts(topics[t])} ({self._num(topics[t]['accuracy_bp'], bn)}%)।"} for t in focus_topics]
+            steps: list[dict] = []
+            for t in focus_topics[:2]:
+                steps.append({"type": "REVIEW_NOTES", "topic": t, "text": f"Re-read your notes on {t} and write a three-line summary." if not bn else f"{t} বিষয়ের নোট আবার পড়ো এবং সংক্ষিপ্ত সারাংশ লেখো।", "minutes": 15})
+                steps.append({"type": "REVISIT_QUESTIONS", "topic": t, "text": f"Retry the questions you missed in {t}." if not bn else f"{t} বিষয়ে যে প্রশ্নগুলো ভুল হয়েছিল সেগুলো আবার করো।", "minutes": 20})
+            if focus_topics:
+                steps.append({"type": "PRACTICE_MCQ", "topic": focus_topics[0], "text": f"Generate a short practice set on {focus_topics[0]}." if not bn else f"{focus_topics[0]} বিষয়ে ছোট একটি অনুশীলন সেট তৈরি করো।", "minutes": None})
+            if level == "BASED_ON_HISTORY" and len(data.get("results", [])) >= 2:
+                steps.append({"type": "COMPARE_ATTEMPTS", "topic": None, "text": "Compare your latest attempt with the previous one." if not bn else "সর্বশেষ চেষ্টার সঙ্গে আগেরটির তুলনা করো।", "minutes": 10})
+            if len(steps) < 2:
+                steps += [{"type": "ASK_ASSISTANT", "topic": None, "text": "Ask the study assistant to quiz you." if not bn else "স্টাডি অ্যাসিস্ট্যান্টকে দিয়ে নিজেকে যাচাই করো।", "minutes": 10},
+                          {"type": "PRACTICE_MCQ", "topic": None, "text": "Try a short mixed practice set." if not bn else "মিশ্র বিষয়ের একটি ছোট অনুশীলন সেট করো।", "minutes": 15}]
+            headline = "A focused plan based on your results so far." if not bn else "এখন পর্যন্ত তোমার ফলাফলের ভিত্তিতে একটি মনোযোগী পরিকল্পনা।"
+            if ungrounded:
+                focus.append({"topic": "Quantum Basket Weaving", "reason": "You scored 37% last month."})
+                headline += " You improved by 37%."
+            return {"headline": headline, "focus": focus, "steps": steps[:5], "caveats": [caveat]}
+
+        e = data["exam"]
+        summary = (f"You answered {d(e['correct'])} of {d(e['question_count'])} questions correctly ({self._num(e['percent_bp'], bn)}%)." if not bn
+                   else f"তুমি {d(e['question_count'])} টি প্রশ্নের মধ্যে {d(e['correct'])} টির সঠিক উত্তর দিয়েছ ({self._num(e['percent_bp'], bn)}%)।")
+        prev = data.get("history", {}).get("previous_same_exam", [])
+        if level == "BASED_ON_HISTORY" and prev:
+            summary += (f" Your previous attempt on this exam scored {self._num(prev[0]['percent_bp'], bn)}%." if not bn else f" এই পরীক্ষায় তোমার আগের চেষ্টায় ফল ছিল {self._num(prev[0]['percent_bp'], bn)}%।")
+        strengths = [{"topic": t, "detail": counts(topics[t]) + ("." if not bn else "।")} for t in strong[:4]]
+        weaknesses = [{"topic": t, "detail": "This topic deserves a little more practice." if not bn else "এই বিষয়ে আরেকটু অনুশীলন দরকার।",
+                       "evidence": f"{counts(topics[t])} ({self._num(topics[t]['accuracy_bp'], bn)}%)"} for t in weak[:4]]
+        steps = []
+        for t in weak[:2]:
+            steps.append({"type": "REVIEW_NOTES", "topic": t, "text": f"Re-read the short notes for {t}." if not bn else f"{t} বিষয়ের সংক্ষিপ্ত নোটগুলো আবার পড়ো।"})
+            steps.append({"type": "REVISIT_QUESTIONS", "topic": t, "text": f"Retry the questions you missed in {t}." if not bn else f"{t} বিষয়ে যে প্রশ্নগুলো ভুল হয়েছিল সেগুলো আবার করো।"})
+        if weak:
+            steps.append({"type": "PRACTICE_MCQ", "topic": weak[0], "text": f"Practise a few new questions on {weak[0]}." if not bn else f"{weak[0]} বিষয়ে কয়েকটি নতুন প্রশ্ন অনুশীলন করো।"})
+        if len(steps) < 2:
+            steps += [{"type": "ASK_ASSISTANT", "topic": None, "text": "Ask the study assistant to explain anything you are unsure about." if not bn else "যা বুঝতে অসুবিধা হয়েছে তা স্টাডি অ্যাসিস্ট্যান্টকে জিজ্ঞেস করো।"},
+                      {"type": "PRACTICE_MCQ", "topic": None, "text": "Try a short mixed practice set." if not bn else "মিশ্র বিষয়ের একটি ছোট অনুশীলন সেট করো।"}]
+        if ungrounded:
+            summary += " You improved by 37% compared with last month."
+            weaknesses.append({"topic": "Quantum Basket Weaving", "detail": "Needs work.", "evidence": "9 of 9 wrong"})
+        return {"summary": summary, "strengths": strengths, "weaknesses": weaknesses, "next_steps": steps[:5], "caveats": [caveat]}
 
     # ---------------------------------------------------------------- embeddings
     async def embed(self, req: EmbedRequest) -> EmbedResult:

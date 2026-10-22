@@ -296,3 +296,24 @@ no provider fallback, error shape, logging) applies unchanged. Implementation ma
 * Recorded deviations from the spec text: see "Part 3 (generation) deviations and limits" in `README.md` (extra SPEC fields, GENERAL needs a topic,
   PREFERRED with no usable material fails, call-count accounting, soft/hard deadlines, MCQ-only cross-check, marks always taken from `part_marks`).
 * Tests: `tests/test_generation_{validate,graph,sources,api}.py` (+ `gen_utils.py`); all use the mock provider or scripted fakes.
+
+## 10. Analysis (Part 5)
+
+Normative description: `backend/docs/PART5_SPEC.md` §0, §3.2, §4, §6. Everything in §0 (auth, key handling, no provider fallback, error shape, logging) applies unchanged.
+Implementation map: `app/api/analyze.py`, `app/graphs/analysis.py`, `app/analysis/{schemas,verify,prompting}.py`, prompts in `app/prompts.py`, mock behaviours in `app/providers/mock.py`.
+
+Two **JSON** (non-streaming) endpoints, bearer-protected:
+
+* `POST /v1/analyze/result` — body `{ request_id, user_id?, chat: {provider, api_key, model, params}, context }` with
+  `context = { language: "en"|"bn", exam: {title, question_count, percent_bp, band, correct, incorrect, unanswered}, topics: [{topic, questions, correct, incorrect, unanswered, accuracy_bp}],
+  strong_topics: [..], weak_topics: [..], incorrect_items: [{topic, stem≤300, selected_text?, correct_text?, explanation?, note?}], history: {data_level: "INITIAL"|"BASED_ON_HISTORY", results_total, previous_same_exam: [{percent_bp}], topic_history: [{topic, answered, accuracy_bp}]} }`.
+  `strong_topics`/`weak_topics` are computed by the backend (PART5_SPEC §1) and must be listed in `topics`. Hard caps (422): ≤40 topics, ≤25 incorrect items, whole context ≤12 000 chars.
+  Response `200 { result: { summary, strengths: [{topic, detail}], weaknesses: [{topic, detail, evidence}], next_steps: [{type, topic|null, text}], caveats: [..] }, usage: {prompt_tokens, completion_tokens, llm_calls}, warnings: [{code, message}] }`.
+* `POST /v1/analyze/plan` — body `{ request_id, user_id?, chat, context: { language, data_level: "INITIAL"|"BASED_ON_HISTORY", topics, strong_topics, weak_topics, results: [{percent_bp}] } }`.
+  Response `200 { result: { headline, focus: [{topic, reason}], steps: [{type, topic|null, text, minutes|null}], caveats }, usage, warnings }` — **no `label`** (the backend sets it from `data_level`).
+* `type` ∈ `REVIEW_NOTES | REVISIT_QUESTIONS | PRACTICE_MCQ | PRACTICE_CQ | COMPARE_ATTEMPTS | ASK_ASSISTANT | READ_DOCUMENT`. Warning codes: `NO_STRUCTURED_OUTPUT_NATIVE`, `REPAIRED`.
+* Errors: the standard HTTP error shape (`PROVIDER_*` → 502/429/504 as in §0, `VALIDATION` 422). `GENERATION_FAILED` (502, `retryable: true`) carries `reason` ∈ `INVALID_OUTPUT | UNGROUNDED_OUTPUT`
+  (a discarded key/canary leak is `INVALID_OUTPUT`, `retryable: false`). A client that disconnects cancels the provider call.
+* Workflow (LangGraph, typed state, keys only in closures): `validate → prepare → generate_structured → verify → [repair once] → finalize | error`; ≤2 provider rounds; deterministic verification described in `README.md` ("Result analysis and study plans").
+* Mock provider markers (in `exam.title` or any `topic`): `[[fail]]` (`PROVIDER_UNAVAILABLE`), `[[rate-limit]]` (429, retry_after 3), `[[bad-json-once]]`, `[[bad-json-always]]`, `[[ungrounded]]` (invents a number and a topic → must be rejected), `[[slow]]` (~20 s).
+* Tests: `tests/test_analysis_{verify,graph,api}.py` (+ `analysis_utils.py`); all use the mock provider or scripted fakes.

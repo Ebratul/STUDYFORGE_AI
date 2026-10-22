@@ -92,7 +92,7 @@ class AppError(Exception):
         reason: str | None = None,
     ) -> None:
         self.code = ErrorCode(code)
-        self.reason = reason  # GENERATION_FAILED only: INVALID_OUTPUT | NO_VALID_QUESTIONS | INSUFFICIENT_SOURCES
+        self.reason = reason  # GENERATION_FAILED only: INVALID_OUTPUT | NO_VALID_QUESTIONS | INSUFFICIENT_SOURCES | UNGROUNDED_OUTPUT
         self.message = message or SAFE_MESSAGES[self.code]
         self.retryable = (self.code in DEFAULT_RETRYABLE) if retryable is None else retryable
         self.retry_after_seconds = retry_after_seconds
