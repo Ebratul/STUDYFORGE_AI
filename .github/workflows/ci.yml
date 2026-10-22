@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Throw-away values for CI only. Never real credentials.
+  TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_test
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_test
+  E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_e2e
+  RAG_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studyforge_rag_test
+  BETTER_AUTH_SECRET: ci-only-secret-ci-only-secret-1234567890
+  CREDENTIAL_ENCRYPTION_KEY: Y2ktb25seS1jcmVkZW50aWFsLWtleS0zMi1ieXRlcyE=
+  RAG_AGENT_TOKEN: ci-only-rag-agent-token-0123456789abcdef
+  APP_URL: http://localhost:3100
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: studyforge_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: backend/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: backend/.nvmrc, cache: pnpm, cache-dependency-path: backend/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  rag-agent:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: rag_agent } }
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: studyforge_rag_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: frontend/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: frontend/.nvmrc, cache: pnpm, cache-dependency-path: frontend/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+        env: { BACKEND_URL: "http://127.0.0.1:4100" }
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, rag-agent, frontend]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: studyforge_e2e }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:latest
+        ports: ["1025:1025", "8025:8025"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: backend/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: backend/.nvmrc }
+      - uses: astral-sh/setup-uv@v5
+      - run: pnpm install --frozen-lockfile
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: uv sync
+        working-directory: rag_agent
+      - run: pnpm exec playwright install --with-deps chromium
+        working-directory: frontend
+      - run: pnpm test:e2e
+        working-directory: frontend
+        env: { E2E_SMTP_URL: "smtp://localhost:1025", E2E_MAILPIT_URL: "http://localhost:8025" }
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: backend/package.json }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: backend/.nvmrc }
+      - run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level=high
+        working-directory: backend
+      - run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level=high
+        working-directory: frontend

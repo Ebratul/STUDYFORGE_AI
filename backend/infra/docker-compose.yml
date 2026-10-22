@@ -1,0 +1,38 @@
+# Local development services only. Not a production deployment.
+# Ports are deliberately offset (5440/1025/8025) to avoid clashing with other local stacks.
+name: studyforge
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: studyforge-db
+    environment:
+      POSTGRES_USER: studyforge
+      POSTGRES_PASSWORD: studyforge_dev_only
+      POSTGRES_DB: studyforge
+    ports:
+      - "127.0.0.1:5440:5432"
+    volumes:
+      - studyforge_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studyforge -d studyforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: studyforge-mailpit
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+  # Optional S3-compatible API for testing STORAGE_DRIVER=s3 locally (a mock, not for real data):
+  #   docker compose -f backend/infra/docker-compose.yml --profile s3 up -d s3mock
+  s3mock:
+    profiles: ["s3"]
+    image: adobe/s3mock:latest
+    container_name: studyforge-s3mock
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: studyforge
+    ports:
+      - "127.0.0.1:9090:9090"
+volumes:
+  studyforge_pgdata:

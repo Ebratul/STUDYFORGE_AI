@@ -1,0 +1,467 @@
+// StudyForge AI — schema. Part 1: identity/platform. Part 2: AI credentials, conversations, documents, retrieval, jobs.
+// Later parts add their own models (questions, exams, groups, ...) via new migrations.
+//
+// The rag_agent service reads/writes "Document" and "DocumentChunk" directly (see rag_agent/README.md);
+// keep column names stable or update its SQL.
+// Standard PostgreSQL only; Neon-compatible.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector, pg_trgm]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum ThemePreference {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
+// ---------------------------------------------------------------------------
+// Identity (shape required by Better Auth; field names are part of its contract)
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String     @id @default(cuid())
+  name          String
+  email         String     @unique
+  emailVerified Boolean    @default(false)
+  image         String?
+  role          Role       @default(USER)
+  status        UserStatus @default(ACTIVE)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  profile       UserProfile?
+  preference    UserPreference?
+  notifications Notification[]
+  auditEvents   AuditEvent[]
+  usageRecords  UsageRecord[]
+  credentials   ProviderCredential[]
+  modelPrefs    ModelPreference[]
+  conversations Conversation[]
+  documents     Document[]
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// Better Auth's built-in rate limiter (storage: "database").
+model RateLimit {
+  id          String @id @default(cuid())
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+}
+
+// ---------------------------------------------------------------------------
+// Profile & preferences
+// ---------------------------------------------------------------------------
+
+model UserProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String?
+  bio         String?
+  timezone    String   @default("UTC")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model UserPreference {
+  id                 String          @id @default(cuid())
+  userId             String          @unique
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  locale             String          @default("en")
+  theme              ThemePreference @default(SYSTEM)
+  emailNotifications Boolean         @default(true)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Platform: notifications, audit, usage, custom rate limiting
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // e.g. "system.welcome"; later parts add exam./group. types
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt(sort: Desc)])
+}
+
+// Never store secrets, tokens, passwords or private content in `metadata`.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  ipHash     String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
+// Extension point for AI token/storage/request accounting (populated from Part 2 onward).
+model UsageRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  String // e.g. "llm.tokens", "storage.bytes"
+  quantity  BigInt
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, category, createdAt(sort: Desc)])
+}
+
+// Fixed-window limiter for application endpoints (see src/server/security/rate-limit.ts).
+model RateLimitBucket {
+  key         String   @id
+  count       Int
+  windowStart DateTime
+
+  @@index([windowStart])
+}
+
+// ---------------------------------------------------------------------------
+// Part 2 — AI providers (bring-your-own-key)
+// ---------------------------------------------------------------------------
+
+enum AiProvider {
+  OPENAI
+  OPENROUTER
+  GROQ
+  // Deterministic test provider; only offered when ALLOW_MOCK_PROVIDER=1 and never in production.
+  MOCK
+}
+
+enum CredentialStatus {
+  UNTESTED
+  VALID
+  INVALID
+  ERROR
+}
+
+enum AiTask {
+  DEFAULT
+  CHAT
+  EMBEDDING
+  MCQ
+  CQ
+  ANALYSIS
+}
+
+// The plaintext key is never stored. `ciphertext`/`iv`/`authTag` are AES-256-GCM (base64) with
+// AAD = "<userId>:<provider>"; `keyId` identifies which master key encrypted it (supports rotation).
+model ProviderCredential {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider      AiProvider
+  ciphertext    String
+  iv            String
+  authTag       String
+  keyId         String
+  last4         String
+  status        CredentialStatus @default(UNTESTED)
+  lastTestedAt  DateTime?
+  lastErrorCode String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  rotatedAt     DateTime?
+
+  modelPrefs ModelPreference[]
+
+  // One key per provider per user keeps "which credential?" unambiguous.
+  @@unique([userId, provider])
+}
+
+// task = DEFAULT is the user's default provider/model; other tasks are optional overrides.
+model ModelPreference {
+  id           String             @id @default(cuid())
+  userId       String
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task         AiTask
+  credentialId String
+  credential   ProviderCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  modelId      String
+  temperature  Float?
+  topP         Float?
+  maxTokens    Int?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@unique([userId, task])
+  @@index([credentialId])
+}
+
+// ---------------------------------------------------------------------------
+// Part 2 — Conversations
+// ---------------------------------------------------------------------------
+
+enum ConversationMode {
+  GENERAL
+  DOCUMENT_ONLY
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum MessageStatus {
+  COMPLETE
+  STREAMING
+  INTERRUPTED
+  FAILED
+}
+
+model Conversation {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  mode          ConversationMode @default(DOCUMENT_ONLY)
+  lastMessageAt DateTime         @default(now())
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  messages  Message[]
+  documents ConversationDocument[]
+
+  @@index([userId, lastMessageAt(sort: Desc)])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+model ConversationDocument {
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  @@id([conversationId, documentId])
+  @@index([documentId])
+}
+
+model Message {
+  id                   String            @id @default(cuid())
+  conversationId       String
+  conversation         Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role                 MessageRole
+  content              String
+  status               MessageStatus     @default(COMPLETE)
+  mode                 ConversationMode?
+  provider             AiProvider?
+  model                String?
+  errorCode            String?
+  // True when document-only mode replied with the "not enough evidence" fallback (no LLM answer was shown).
+  insufficientEvidence Boolean           @default(false)
+  promptTokens         Int?
+  completionTokens     Int?
+  createdAt            DateTime          @default(now())
+
+  citations MessageCitation[]
+
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([content(ops: raw("gin_trgm_ops"))], type: Gin)
+}
+
+// Document name/page/quote are snapshotted so a citation still reads correctly after the document is deleted.
+model MessageCitation {
+  id            String   @id @default(cuid())
+  messageId     String
+  message       Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  ordinal       Int
+  documentId    String?
+  documentName  String
+  chunkId       String?
+  page          Int?
+  section       String?
+  // Verified verbatim quote when the model's quote was checked against the chunk text;
+  // otherwise a short excerpt of the chunk (quoteVerified = false).
+  quote         String
+  quoteVerified Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@unique([messageId, ordinal])
+  @@index([documentId])
+}
+
+// ---------------------------------------------------------------------------
+// Part 2 — Documents & retrieval
+// ---------------------------------------------------------------------------
+
+enum DocumentStatus {
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+  NEEDS_OCR
+}
+
+model Document {
+  id                String         @id @default(cuid())
+  ownerId           String
+  owner             User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name              String
+  extension         String
+  mimeType          String
+  sizeBytes         Int
+  sha256            String
+  storageKey        String         @unique
+  status            DocumentStatus @default(QUEUED)
+  statusCode        String? // stable machine code, e.g. EMBEDDING_AUTH_INVALID
+  statusDetail      String? // safe, user-facing explanation
+  progress          Int            @default(0)
+  pageCount         Int?
+  textLength        Int?
+  chunkCount        Int?
+  embeddingProvider AiProvider?
+  embeddingModel    String?
+  // Chunks belong to exactly one processing version; retrieval only reads the current one.
+  processingVersion Int            @default(0)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  processedAt       DateTime?
+
+  chunks        DocumentChunk[]
+  conversations ConversationDocument[]
+
+  @@unique([ownerId, sha256])
+  @@index([ownerId, createdAt(sort: Desc)])
+}
+
+// "embedding" (vector(1536)) and "search" (tsvector) exist only in SQL (see the part2 migration);
+// Prisma cannot model them, so the rag_agent service reads/writes them with raw SQL.
+model DocumentChunk {
+  id                String                       @id
+  documentId        String
+  document          Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ownerId           String // denormalised so every retrieval query can filter on it directly
+  chunkIndex        Int
+  processingVersion Int
+  page              Int?
+  section           String?
+  content           String
+  tokenCount        Int
+  embeddingModel    String
+  metadata          Json?
+  // vector(1536). Written/read with raw SQL by rag_agent. Deliberately NO ANN (HNSW/IVFFlat) index: retrieval is
+  // always filtered to one owner's few documents, and approximate indexes post-filter (can return too few rows).
+  embedding         Unsupported("vector(1536)")?
+  // tsvector generated from "content" (see migration SQL); keyword side of hybrid retrieval.
+  search            Unsupported("tsvector")?     @default(dbgenerated("to_tsvector('simple'::regconfig, content)"))
+  createdAt         DateTime                     @default(now())
+
+  @@unique([documentId, processingVersion, chunkIndex])
+  @@index([ownerId, documentId])
+  @@index([search], type: Gin)
+}
+
+// ---------------------------------------------------------------------------
+// Part 2 — Background jobs (Postgres-backed queue; SKIP LOCKED claiming)
+// ---------------------------------------------------------------------------
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  type        String
+  payload     Json
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  runAt       DateTime  @default(now())
+  lockedAt    DateTime?
+  lockedBy    String?
+  lastError   String?
+  // Held only while the job is PENDING/RUNNING (cleared on completion), so a second job with the same key
+  // cannot be created concurrently: the unique constraint is the lock. NULLs never collide.
+  dedupeKey   String?   @unique
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+}
