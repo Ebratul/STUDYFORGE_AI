@@ -118,7 +118,6 @@ describe("AI feedback card states", () => {
   it("points to settings when no model is configured", () => {
     const out = render(view({ status: "NOT_CONFIGURED" }));
     expect(out).toContain("/settings/providers");
-    expect(out).toContain("/settings/api-keys");
   });
   it("renders ready feedback with evidence, next-step links, caveats and the disclaimer; AI text is escaped", () => {
     const out = render(view({ status: "READY", content: { summary: "Good effort.", strengths: [{ topic: "Cells", detail: "6 of 6" }], weaknesses: [{ topic: "Energy", detail: "needs practice", evidence: "1 of 5 correct" }], nextSteps: [{ type: "PRACTICE_MCQ", topic: "Energy", text: "Try <script>alert(1)</script> 5 MCQs" }], caveats: ["One exam only."] }, disclaimer: "AI-generated from your verified results. It does not change your score." }));

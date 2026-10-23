@@ -5,11 +5,11 @@ test.describe("application shell and navigation", () => {
   test("desktop shell: sidebar sections and no 'Soon' labels (every module exists in this build)", async ({ page }) => {
     await register(page);
     const nav = page.getByRole("navigation", { name: "Primary" });
-    for (const label of ["Workspace", "Dashboard", "Conversation", "MCQ Generator", "CQ Generator", "Documents", "Question Bank", "Exams", "Groups", "Notifications", "Profile", "Privacy & account", "AI providers", "API keys"]) {
+    for (const label of ["Workspace", "Dashboard", "Conversation", "MCQ Generator", "CQ Generator", "Documents", "Question Bank", "Exams", "Groups", "Notifications", "Profile", "Privacy & account", "AI connection"]) {
       await expect(nav.getByRole("link", { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) })).toBeVisible();
     }
     // Every module in the sidebar is implemented now, so nothing is labelled "Soon".
-    for (const label of ["Conversation", "MCQ Generator", "CQ Generator", "Question Bank", "Documents", "Exams", "Groups", "AI providers", "API keys"]) {
+    for (const label of ["Conversation", "MCQ Generator", "CQ Generator", "Question Bank", "Documents", "Exams", "Groups", "AI connection"]) {
       await expect(nav.getByRole("link", { name: new RegExp(`^${label}`) })).not.toContainText("Soon");
     }
     await expect(nav.getByRole("link", { name: /^Workspace/ })).not.toContainText("Soon");
@@ -79,7 +79,7 @@ test.describe("application shell and navigation", () => {
     await expect(page).toHaveURL(/\/dashboard$/);
     await expect(page.getByRole("dialog")).toHaveCount(0); // drawer closed after navigating
 
-    for (const path of ["/workspace", "/dashboard", "/settings/profile", "/settings/privacy", "/notifications", "/settings/api-keys", "/settings/providers", "/documents", "/chat"]) {
+    for (const path of ["/workspace", "/dashboard", "/settings/profile", "/settings/privacy", "/notifications", "/settings/providers", "/documents", "/chat"]) {
       await page.goto(`${baseURL}${path}`);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, `${path} overflows horizontally`).toBeLessThanOrEqual(0);
@@ -99,7 +99,7 @@ test.describe("application shell and navigation", () => {
 
   test("authenticated pages have no serious accessibility violations", async ({ page }) => {
     await register(page);
-    for (const path of ["/workspace", "/dashboard", "/notifications", "/settings/profile", "/settings/privacy", "/settings/api-keys", "/settings/providers", "/documents", "/chat", "/mcq", "/cq", "/question-bank"]) {
+    for (const path of ["/workspace", "/dashboard", "/notifications", "/settings/profile", "/settings/privacy", "/settings/providers", "/documents", "/chat", "/mcq", "/cq", "/question-bank"]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();

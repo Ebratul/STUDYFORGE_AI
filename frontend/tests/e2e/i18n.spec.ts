@@ -375,10 +375,10 @@ test.describe("settings in Bangla", () => {
   test("profile, privacy and AI providers pages are translated and accessible", async ({ browser }) => {
     const u = await newUser(browser);
     await useBangla(u.ctx, u.page);
-    for (const [path, heading] of [["/settings/profile", /প্রোফাইল/], ["/settings/privacy", /গোপনীয়তা/], ["/settings/api-keys", /API কী/], ["/settings/providers", /মডেল|প্রোভাইডার/]] as const) {
+    for (const [path, heading] of [["/settings/profile", /প্রোফাইল/], ["/settings/privacy", /গোপনীয়তা/], ["/settings/providers", /এআই সংযোগ/]] as const) {
       await u.page.goto(path);
       await expect(u.page.getByRole("heading", { name: heading }).first()).toBeVisible();
-      expect(await englishLeft(u.page, [...USER_DATA, /OpenAI|OpenRouter|Groq|Mock|mock|text-embedding/, /^AES|JSON/])).toEqual([]);
+      expect(await englishLeft(u.page, [...USER_DATA, /OpenAI|OpenRouter|Groq|Mock|mock|text-embedding|deepseek|sk-or-|openrouter\.ai|provider\/model-name/, /^AES|JSON/])).toEqual([]);
       await noRawKeys(u.page);
       await a11y(u.page, `bn ${path}`);
     }

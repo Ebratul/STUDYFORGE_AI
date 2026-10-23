@@ -132,12 +132,12 @@ export const isPending = (s: FeedbackStatus | undefined | null): boolean => s ==
 
 export const FAILURE_TEXT: Record<string, string> = {
   QUOTA_EXCEEDED: msg("You've reached your AI usage limit for now, so feedback couldn't be written. Your score is unaffected."),
-  PROVIDER_AUTH_INVALID: msg("Your AI provider rejected the API key. Check it in Settings → API keys."),
+  PROVIDER_AUTH_INVALID: msg("Your AI provider rejected the API key. Check it in Settings → AI connection."),
   PROVIDER_RATE_LIMITED: msg("Your AI provider is rate-limiting requests. Try again in a minute."),
   PROVIDER_TIMEOUT: msg("Your AI provider took too long to answer. Try again."),
   PROVIDER_UNAVAILABLE: msg("Your AI provider is unavailable right now. Try again shortly."),
   UPSTREAM_UNAVAILABLE: msg("The AI service is unavailable right now. Try again shortly."),
-  MODEL_NOT_FOUND: msg("The selected model isn't available for your key. Choose another in Settings → AI providers."),
+  MODEL_NOT_FOUND: msg("The selected model isn't available for your key. Choose another in Settings → AI connection."),
   INVALID_OUTPUT: msg("The AI's answer didn't pass our checks, so nothing was kept. Try again."),
   UNGROUNDED_OUTPUT: msg("The AI's answer mentioned things your results don't support, so it was discarded. Try again."),
 };

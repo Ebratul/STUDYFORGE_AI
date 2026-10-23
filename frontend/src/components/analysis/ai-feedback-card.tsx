@@ -35,8 +35,7 @@ export function AiFeedbackBody({ view, busy, onRequest, onRegenerate }: { view: 
       <div className="space-y-2 text-sm" data-testid="ai-not-configured">
         <p className="text-muted-foreground">{t("AI feedback needs a model. Add your API key and choose a model, then ask again.")}</p>
         <div className="flex flex-wrap gap-2">
-          <Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/api-keys">{t("API keys")}</Link></Button>
-          <Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/providers">{t("AI providers")}</Link></Button>
+          <Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/providers">{t("AI connection")}</Link></Button>
           <Button size="sm" className="rounded-lg" onClick={onRequest} disabled={busy}>{busy && <Loader2 className="animate-spin" aria-hidden />} {t("Try again")}</Button>
         </div>
       </div>

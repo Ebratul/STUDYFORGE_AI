@@ -33,7 +33,7 @@ test.describe("accessibility sweep", () => {
     await register(page);
     for (const path of [
       "/workspace", "/dashboard", "/documents", "/chat", "/mcq", "/cq", "/question-bank", "/exams", "/exams/new", "/study-plan", "/groups", "/join", "/notifications",
-      "/settings/profile", "/settings/privacy", "/settings/providers", "/settings/api-keys",
+      "/settings/profile", "/settings/privacy", "/settings/providers",
     ]) await visit(page, path, `${path} (new account)`);
   });
 

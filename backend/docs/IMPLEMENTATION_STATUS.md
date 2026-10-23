@@ -13,6 +13,19 @@ Legend: ✅ implemented & verified · 🟡 implemented, partly verified · ⛔ p
 ### Part 1 (carried over; re-verified after the backend/frontend split)
 Accounts, recovery, verification, sessions, RBAC/admin, profile/preferences, notifications, privacy (password change, sessions, export, deletion), security headers/CSP, rate limiting, audit, design system, responsive shell — ✅ (same E2E coverage as before, now through the proxy + Hono backend).
 
+### Post-Part-5 change — manual AI connection (three-field form)
+Contract: [AI_CONNECTION_SPEC.md](AI_CONNECTION_SPEC.md). **Settings → AI connection** now has exactly three text inputs (API key, chat model id, embedding model id) backed by the existing credential/preference tables; provider is derived from the key (OpenRouter by default), no model allow-list, no provider/base-URL/dimension fields.
+
+| Area | Status | Notes |
+|---|---|---|
+| Server-side validation before activation (auth → chat → embedding, minimal paid calls, finite-vector and dimension checks); failed attempts change nothing | ✅ | rag_agent `POST /v1/providers/validate` (44 tests, respx-mocked OpenRouter) + backend `PUT /api/ai/connection` (26 tests with FakeRag). **Never run against real OpenRouter** (no key); behaviour checked against its public docs on 2026-10-24 only. |
+| Key handling (AES-256-GCM, masked, blank input keeps the saved key, never in responses/logs/audit/browser storage) | ✅ | Key-scan tests (responses, logs, audit, account export) and an E2E DOM/storage scan. |
+| Embedding identity (provider + model + measured dimension) recorded per document; stale documents excluded with a clear message; re-embed workflow; old chunks kept until the new version commits | ✅ | New columns (additive migration, backfilled with 1536); `modules/ai/embedding-identity.ts` used by chat, generation, listing, re-embed. Only 1536-dimensional embedding models are supported. |
+| Chat/MCQ/CQ/analysis reuse the configured chat model; mock provider never used unless explicitly enabled outside production | ✅ | Four mock touchpoints listed in the B4 report (all gated by `ALLOW_MOCK_PROVIDER`; production start-up refuses it). |
+| UI: three inputs, per-check results, re-embed banner, Documents badge, English + Bangla | ✅ | E2E `ai-connection.spec` (13) incl. axe (the toast library is excluded from that scan: it was sampled mid-animation). |
+
+Verification for this change: backend 649 passed / 3 skipped (S3), rag_agent 607 passed, frontend unit 293 passed, lint/typecheck/build/migration drift clean; browser suite — see the final report.
+
 ### Part 5 — AI agents, analytics, admin, hardening, i18n, release
 Contract: [PART5_SPEC.md](PART5_SPEC.md).
 

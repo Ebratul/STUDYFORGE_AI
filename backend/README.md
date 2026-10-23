@@ -49,7 +49,7 @@ openssl rand -base64 32   # CREDENTIAL_ENCRYPTION_KEY  (exactly 32 random bytes)
 openssl rand -hex 24      # RAG_AGENT_TOKEN  (same value in backend/.env.local and rag_agent/.env.local)
 ```
 
-Then in the app: **Settings → API keys** (add your own OpenAI / OpenRouter / Groq key and test it) → **Settings → AI providers** (pick a default chat model and an embedding model) → **Documents** (upload) → **Conversation**, or **MCQ Generator / CQ Generator** (from a topic, pasted text and/or documents; optional per-task models for `MCQ` and `CQ`) → review, edit and save into a collection in the **Question Bank**.
+Then in the app: **Settings → AI connection** (paste your own API key, type the chat model id and the embedding model id, press *Test and save* — it makes two tiny paid requests; OpenRouter is the default provider and the embedding model must return 1536-dimensional vectors, e.g. `openai/text-embedding-3-small`) → **Documents** (upload) → **Conversation**, or **MCQ Generator / CQ Generator** (from a topic, pasted text and/or documents; optional per-task models for `MCQ` and `CQ`) → review, edit and save into a collection in the **Question Bank**.
 
 To make yourself an admin: `cd backend && pnpm admin:grant you@example.com`.
 

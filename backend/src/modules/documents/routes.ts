@@ -6,7 +6,7 @@ import { requireAuth, sameOriginGuard } from "../../http/middleware.js";
 import type { AppEnv } from "../../http/context.js";
 import { parseWith } from "../../http/body.js";
 import { getLimits } from "./limits.js";
-import { createDownloadLink, deleteDocument, getDocument, getUsage, listDocuments, openDownload, retryDocument, uploadDocuments, type UploadFile } from "./service.js";
+import { createDownloadLink, deleteDocument, getDocument, getUsage, listDocuments, openDownload, reembedDocuments, retryDocument, uploadDocuments, type UploadFile } from "./service.js";
 import type { Storage } from "./storage/types.js";
 
 const idSchema = z.string().min(1).max(64);
@@ -81,6 +81,13 @@ export function documentRoutes(storage: Storage) {
       files.push({ name: value.name, type: value.type, bytes: new Uint8Array(await value.arrayBuffer()) });
     }
     return c.json({ results: await uploadDocuments(storage, user, files) });
+  });
+
+  // Bulk re-embed after the embedding model changed. Registered before the `/:id` routes; owner-scoped, idempotent, bounded, rate limited.
+  r.post("/reembed", sameOriginGuard, async (c) => {
+    const user = c.get("user");
+    await enforceRateLimit({ key: `doc-reembed:${user.id}`, limit: 5, windowSec: 60 });
+    return c.json(await reembedDocuments(user));
   });
 
   r.get("/:id", async (c) => c.json({ document: await getDocument(c.get("user"), parseWith(idSchema, c.req.param("id"))) }));

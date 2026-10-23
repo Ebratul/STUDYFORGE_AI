@@ -11,6 +11,13 @@ Consolidated from all five parts. "Verified" always means an automated test or a
 * AI feedback/plan jobs spend the user's own provider quota (automatic by default once configured; switchable in settings). Costs are never estimated.
 * Question generation is synchronous (SSE, ≤ 50 MCQs / 20 CQs per run), not a background batch job.
 
+## AI connection
+* The configuration form supports one connection per account (one key, one chat model, one embedding model). The provider is derived from the key (`sk-or-` → OpenRouter, the default; `gsk_` → Groq; other `sk-` → OpenAI) — there is no provider selector. Groq cannot serve embeddings.
+* Embedding models must produce **1536-dimensional** vectors (the vector column is `vector(1536)`); other dimensions are rejected with the measured size. Changing the dimension would need a migration and a full re-index (not implemented).
+* Validation makes two tiny paid requests with the user's key; model support is proven only by the provider answering, so a model that is valid but temporarily unavailable fails validation until it responds.
+* Saving a new embedding model makes existing documents "stale" until re-embedded; a failed re-embed leaves that document FAILED (retry) rather than keeping it searchable under the old model.
+* OpenRouter's behaviour was checked against its public documentation and mocked HTTP only; no real key was used.
+
 ## Exams and groups
 * Deadlines depend on server clocks (NTP) and include a configurable latency grace (default 5 s) for saves/submits.
 * Race-safety claims are limited to what the tests exercised on a single Postgres: concurrent starts/submits/expiry/joins. Multi-instance clock skew, a separate-process worker running for hours and large-group leaderboard load were not tested.

@@ -9,8 +9,7 @@ import { msg } from "@/lib/i18n/translate";
 const LINKS = [
   { href: "/settings/profile", label: msg("Profile & preferences") },
   { href: "/settings/privacy", label: msg("Privacy & account") },
-  { href: "/settings/providers", label: msg("AI providers") },
-  { href: "/settings/api-keys", label: msg("API keys") },
+  { href: "/settings/providers", label: msg("AI connection") },
 ];
 
 export function SettingsNav() {

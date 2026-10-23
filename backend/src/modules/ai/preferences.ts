@@ -12,7 +12,8 @@ export const TASKS = ["CHAT", "EMBEDDING", "MCQ", "CQ", "ANALYSIS"] as const;
 /** Generation limits enforced for every request, regardless of what a model could technically accept. */
 export const LIMITS = { temperature: { min: 0, max: 2 }, topP: { min: 0, max: 1 }, maxTokens: { min: 1, max: 32_768 } } as const;
 
-const modelId = z
+/** Free-text model id: format only — there is deliberately no allow-list (AI_CONNECTION_SPEC §0.1). */
+export const modelIdSchema = z
   .string()
   .trim()
   .min(1, "Choose or enter a model.")
@@ -21,7 +22,7 @@ const modelId = z
 
 const entry = z.object({
   provider: z.string().min(1).max(20),
-  modelId,
+  modelId: modelIdSchema,
   temperature: z.number().min(LIMITS.temperature.min).max(LIMITS.temperature.max).nullable().optional(),
   topP: z.number().min(LIMITS.topP.min).max(LIMITS.topP.max).nullable().optional(),
   maxTokens: z.number().int().min(LIMITS.maxTokens.min).max(LIMITS.maxTokens.max).nullable().optional(),
@@ -88,6 +89,8 @@ export type ResolvedModel = {
   provider: AiProvider;
   modelId: string;
   credentialId: string;
+  /** EMBEDDING only: the vector length measured when the configuration was validated (null for older rows). */
+  embeddingDimension: number | null;
   params: { temperature: number | null; topP: number | null; maxTokens: number | null };
 };
 
@@ -101,6 +104,7 @@ export async function resolveModel(userId: string, task: (typeof TASKS)[number])
     provider: row.credential.provider,
     modelId: row.modelId,
     credentialId: row.credentialId,
+    embeddingDimension: row.embeddingDimension,
     params: { temperature: row.temperature, topP: row.topP, maxTokens: row.maxTokens },
   };
 }

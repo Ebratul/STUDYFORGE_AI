@@ -76,7 +76,7 @@ export function readCatalog(name, root = ROOT) {
 
 /** `{name}` placeholders and plural branch names must survive translation. */
 export function placeholders(s) {
-  return [...s.matchAll(/\{(\w+)(?:\s*,\s*plural)?/g)].map((m) => m[1]).sort();
+  return [...s.matchAll(/\{(\w+)(?=\s*[,}])/g)].map((m) => m[1]).sort();
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

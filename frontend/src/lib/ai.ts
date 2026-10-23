@@ -1,5 +1,5 @@
 import { EN } from "@/lib/format-locale";
-import { msg, type TFunction } from "@/lib/i18n/translate";
+import type { TFunction } from "@/lib/i18n/translate";
 
 export type ProviderId = "openai" | "openrouter" | "groq" | "mock";
 export type CredentialStatus = "UNTESTED" | "VALID" | "INVALID" | "ERROR";
@@ -46,13 +46,6 @@ export type ModelsResponse = { provider: ProviderId; fetched_at: string; models:
 
 export type UsageResponse = { tokens: number; requests: number; tokenLimit: number; requestLimit: number; resetsAt: string };
 
-export const STATUS_LABEL: Record<CredentialStatus, string> = {
-  UNTESTED: msg("Not tested yet"),
-  VALID: msg("Connected"),
-  INVALID: msg("Key rejected"),
-  ERROR: msg("Couldn't verify"),
-};
-
 /** Safe, human explanations for the normalised error codes (never raw provider text). */
 export function describeProviderCode(code: string | null | undefined, t: TFunction = EN.t): string {
   switch (code) {
@@ -66,14 +59,7 @@ export function describeProviderCode(code: string | null | undefined, t: TFuncti
     case "CONTENT_FILTERED": return t("The provider declined to answer this request.");
     case "QUOTA_EXCEEDED": return t("Your provider account is out of quota or credit.");
     case "UPSTREAM_UNAVAILABLE": return t("The AI service is unavailable right now. Please try again shortly.");
+    case "EMBEDDING_DIMENSION_MISMATCH": return t("This embedding model's vectors don't match what StudyForge can store.");
     default: return t("The provider returned an error.");
   }
 }
-
-export const TASK_LABEL: Record<TaskId, { title: string; hint: string; available: boolean }> = {
-  CHAT: { title: msg("Conversation"), hint: msg("Used for chat. Falls back to your default model."), available: true },
-  EMBEDDING: { title: msg("Embeddings (documents)"), hint: msg("Used to index and search your documents. Required for document-only chat."), available: true },
-  MCQ: { title: msg("MCQ generation"), hint: msg("Used to write multiple-choice questions. Falls back to your default model."), available: true },
-  CQ: { title: msg("CQ generation"), hint: msg("Used to write CQs and model answers. Falls back to your default model."), available: true },
-  ANALYSIS: { title: msg("Result analysis"), hint: msg("Stored now; used when exam analysis ships."), available: false },
-};

@@ -15,7 +15,7 @@ type Body = { kind: AssistantKind; attemptId?: string; questionId?: string; topi
 const DENIED: Record<string, string> = {
   NOT_ELIGIBLE: msg("The study assistant can't use this question: the exam's review settings don't show its answer."),
   CONFLICT: msg("These results haven't been released yet."),
-  NOT_CONFIGURED: msg("Choose a model in Settings → AI providers to use the study assistant."),
+  NOT_CONFIGURED: msg("Choose a model in Settings → AI connection to use the study assistant."),
   QUOTA_EXCEEDED: msg("You've reached your AI usage limit for now."),
   RATE_LIMITED: msg("You've started a lot of assistant sessions. Please wait a little and try again."),
 };

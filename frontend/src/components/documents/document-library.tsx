@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { EmptyState } from "@/components/common/empty-state";
+import { ReembedButton } from "@/components/ai/reembed-button";
 import { ApiError, api, apiGet, apiSend } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,8 @@ export type DocumentView = {
   status: "QUEUED" | "PROCESSING" | "READY" | "FAILED" | "NEEDS_OCR";
   statusCode: string | null; statusDetail: string | null; progress: number;
   pageCount: number | null; chunkCount: number | null; embeddingModel: string | null; createdAt: string; processedAt: string | null;
+  /** Indexed with a different embedding provider/model/dimension than the current AI connection (docs/AI_CONNECTION_SPEC.md §3). */
+  embeddingStale?: boolean; embeddingDimension?: number | null;
 };
 export type Limits = {
   maxFileBytes: number; maxFilesPerUpload: number; storageQuotaBytes: number; maxDocuments: number;
@@ -114,6 +117,7 @@ export function DocumentLibrary({ initialDocs, initialLimits, hasEmbedding }: { 
   const used = limits.data.usedBytes;
   const quotaPct = Math.min(100, Math.round((used / limits.data.storageQuotaBytes) * 100));
   const list = docs.data ?? [];
+  const staleCount = list.filter((d) => d.status === "READY" && d.embeddingStale).length;
 
   return (
     <div className="space-y-6">
@@ -123,6 +127,17 @@ export function DocumentLibrary({ initialDocs, initialLimits, hasEmbedding }: { 
           <AlertTitle>Choose an embedding model first</AlertTitle>
           <AlertDescription>
             Documents are searched with embeddings, which use your own provider key. <Link href="/settings/providers" className="font-medium underline">Choose an embedding model</Link>; until then uploaded files fail with a clear message and can be retried.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {staleCount > 0 && (
+        <Alert className="border-warning/40 bg-warning-soft" data-testid="stale-banner">
+          <AlertTriangle aria-hidden />
+          <AlertTitle>{staleCount === 1 ? "1 document needs re-embedding" : `${staleCount} documents need re-embedding`}</AlertTitle>
+          <AlertDescription>
+            <p>You changed your embedding model, so these documents are not searched until they are re-embedded. Nothing is deleted: names, permissions and the old index stay until the new index is complete.</p>
+            <div className="mt-3"><ReembedButton count={staleCount} onQueued={refresh} /></div>
           </AlertDescription>
         </Alert>
       )}
@@ -180,9 +195,16 @@ export function DocumentLibrary({ initialDocs, initialLimits, hasEmbedding }: { 
                   {ACTIVE.has(d.status) && <Progress value={d.progress} className="mt-2 h-1.5" aria-label={`${d.name} processing progress`} />}
                   {(d.status === "FAILED" || d.status === "NEEDS_OCR") && d.statusDetail && <p className="mt-1 text-xs text-destructive" role="status">{d.statusDetail}</p>}
                 </div>
-                <Badge variant="secondary" className={cn("w-fit gap-1 rounded-full", s.cls)} data-status={d.status}>
-                  <Icon className={cn("size-3.5", d.status === "PROCESSING" && "animate-spin")} aria-hidden /> {s.label}
-                </Badge>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="secondary" className={cn("w-fit gap-1 rounded-full", s.cls)} data-status={d.status}>
+                    <Icon className={cn("size-3.5", d.status === "PROCESSING" && "animate-spin")} aria-hidden /> {s.label}
+                  </Badge>
+                  {d.status === "READY" && d.embeddingStale && (
+                    <Badge variant="outline" className="w-fit gap-1 rounded-full border-warning/50 bg-warning-soft text-foreground" data-testid={`stale-${d.name}`} title="Indexed with a different embedding model than your current AI connection. Re-embed it to search it again.">
+                      <AlertTriangle className="size-3.5" aria-hidden /> Needs re-embedding
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex items-center gap-1">
                   <Button size="icon-sm" variant="ghost" aria-label={`Download ${d.name}`} onClick={() => void download(d)}><Download aria-hidden /></Button>
                   {(d.status === "FAILED" || d.status === "NEEDS_OCR" || d.status === "READY") && (

@@ -27,7 +27,7 @@ export type CredentialView = {
   rotatedAt: string | null;
 };
 
-const aad = (userId: string, provider: AiProvider) => `${userId}:${provider}`;
+export const aad = (userId: string, provider: AiProvider) => `${userId}:${provider}`;
 
 /** Explicit select: ciphertext/iv/authTag are never loaded for listing, so they cannot leak by accident. */
 const VIEW_SELECT = { provider: true, last4: true, status: true, lastTestedAt: true, lastErrorCode: true, createdAt: true, rotatedAt: true } as const;

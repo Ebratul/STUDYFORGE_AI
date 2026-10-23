@@ -13,6 +13,7 @@ import { recordAudit } from "../../lib/audit.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
 import { getModels } from "../ai/models.js";
+import { EXPECTED_DIMENSION, guidanceFor, isCompatible, STALE_DOCUMENTS_MESSAGE } from "../ai/embedding-identity.js";
 import { resolveModel } from "../ai/preferences.js";
 import { fromWire, toWire } from "../ai/providers.js";
 import { assertWithinQuota, recordUsage } from "../ai/usage.js";
@@ -87,7 +88,7 @@ async function resolveContext(rag: RagAgentClient, user: SessionUser, kind: RunK
     if (pref && pref.provider === provider && pref.modelId === modelId) params = pref.params;
   } else {
     const pref = await resolveModel(user.id, kind);
-    if (!pref) throw new AppError("NOT_CONFIGURED", `Choose a default model in Settings → AI providers before generating ${kind === "MCQ" ? "MCQs" : "CQs"}.`);
+    if (!pref) throw new AppError("NOT_CONFIGURED", `Choose a default model in Settings → AI connection before generating ${kind === "MCQ" ? "MCQs" : "CQs"}.`);
     ({ provider, modelId, params } = pref);
   }
   const chat = await getDecryptedKey(user.id, provider); // NOT_CONFIGURED if no key for exactly this provider
@@ -96,7 +97,7 @@ async function resolveContext(rag: RagAgentClient, user: SessionUser, kind: RunK
   let docs: Ctx["docs"] = [];
   let embedding: Ctx["embedding"] = null;
   if (documentIds.length) {
-    const rows = await db.document.findMany({ where: { id: { in: documentIds }, ownerId: user.id }, select: { id: true, name: true, status: true, embeddingModel: true } });
+    const rows = await db.document.findMany({ where: { id: { in: documentIds }, ownerId: user.id }, select: { id: true, name: true, status: true, embeddingProvider: true, embeddingModel: true, embeddingDimension: true } });
     const byId = new Map(rows.map((r) => [r.id, r]));
     const problems: string[] = [];
     for (const id of documentIds) {
@@ -109,8 +110,9 @@ async function resolveContext(rag: RagAgentClient, user: SessionUser, kind: RunK
     if (!problems.length && settings.topic) {
       // Topic + documents = retrieval, which needs the embedding model the documents were indexed with.
       const emb = await resolveModel(user.id, "EMBEDDING");
-      if (!emb) throw new AppError("NOT_CONFIGURED", "Choose an embedding model in Settings → AI providers to find the topic in your documents, or clear the topic to cover the whole document.");
-      if (rows.some((r) => r.embeddingModel !== emb.modelId)) fields.documentIds = "Some documents were processed with a different embedding model than the one currently selected. Reprocess them or switch back in Settings.";
+      if (!emb) throw new AppError("NOT_CONFIGURED", "Choose an embedding model in Settings → AI connection to find the topic in your documents, or clear the topic to cover the whole document.");
+      const identity = { provider: emb.provider, model: emb.modelId, dimension: emb.embeddingDimension ?? EXPECTED_DIMENSION };
+      if (rows.some((r) => !isCompatible(r, identity))) fields.documentIds = STALE_DOCUMENTS_MESSAGE;
       else embedding = { provider: emb.provider, model: emb.modelId, key: (await getDecryptedKey(user.id, emb.provider)).key };
     }
   }
@@ -177,7 +179,7 @@ async function* execute(rag: RagAgentClient, ctx: Ctx, req: GenerateRequest, sig
       else if (ev.event === "result") result = ev.data;
       else if (ev.event === "error") {
         const reason = ev.data.reason;
-        throw new GenFailure(ev.data.code, ev.data.message, Boolean(ev.data.retryable), ev.data.retry_after_seconds ?? null, reason ? { reason } : {});
+        throw new GenFailure(ev.data.code, guidanceFor(ev.data.code, ev.data.message), Boolean(ev.data.retryable), ev.data.retry_after_seconds ?? null, reason ? { reason } : {});
       }
     }
   } catch (err) {

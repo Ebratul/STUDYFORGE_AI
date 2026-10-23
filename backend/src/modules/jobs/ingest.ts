@@ -3,6 +3,7 @@ import { recordProviderEvent } from "../../lib/metrics.js";
 import { RagAgentError } from "../../clients/rag-agent.js";
 import { db } from "../../lib/db.js";
 import { logger } from "../../lib/logger.js";
+import { DIMENSION_MISMATCH_MESSAGE, EXPECTED_DIMENSION } from "../ai/embedding-identity.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
 import { resolveModel } from "../ai/preferences.js";
 import { toWire } from "../ai/providers.js";
@@ -13,13 +14,14 @@ import { RetryableJobError } from "./queue.js";
 
 /** User-facing explanations for expected ingestion failures (never contain upstream bodies or keys). */
 const MESSAGES: Record<string, string> = {
-  EMBEDDING_NOT_CONFIGURED: "Choose an embedding model in Settings → AI providers, then retry.",
+  EMBEDDING_NOT_CONFIGURED: "Choose an embedding model in Settings → AI connection, then retry.",
   PROVIDER_AUTH_INVALID: "Your embedding provider rejected the API key. Update it in Settings, then retry.",
   MODEL_NOT_FOUND: "The selected embedding model wasn't found for your key. Choose another in Settings, then retry.",
   PROVIDER_RATE_LIMITED: "The embedding provider is rate-limiting requests. Wait a few minutes, then retry.",
   PROVIDER_TIMEOUT: "The embedding provider timed out. Retry in a moment.",
   PROVIDER_UNAVAILABLE: "The embedding provider is unavailable right now. Retry in a moment.",
   UPSTREAM_UNAVAILABLE: "The document processing service is unavailable. Retry in a moment.",
+  EMBEDDING_DIMENSION_MISMATCH: DIMENSION_MISMATCH_MESSAGE,
   BUSY: "Document processing is busy. It will be retried automatically.",
 };
 
@@ -86,6 +88,11 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
           return failDocument(doc.id, result.code, result.message);
         }
 
+        const measured = result.type === "result" ? (result.embedding_dimension ?? embedding.embeddingDimension ?? EXPECTED_DIMENSION) : EXPECTED_DIMENSION;
+        if (result.status === "READY" && measured !== EXPECTED_DIMENSION) {
+          // rag_agent already rejects other lengths; this keeps the invariant even if that contract ever changes.
+          return failDocument(doc.id, "EMBEDDING_DIMENSION_MISMATCH");
+        }
         if (result.status === "READY") {
           await db.document.updateMany({
             where: { id: doc.id },
@@ -99,6 +106,7 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
               chunkCount: result.chunk_count ?? null,
               embeddingProvider: embedding.provider,
               embeddingModel: result.embedding_model ?? embedding.modelId,
+              embeddingDimension: measured,
               processedAt: new Date(),
               processingVersion: doc.processingVersion + 1,
             },

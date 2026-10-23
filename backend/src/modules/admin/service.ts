@@ -305,7 +305,7 @@ export async function health(deps: { rag: RagAgentClient; storage: Storage }) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------------------------------------------------
-const META_ALLOW = new Set(["via", "reason", "from", "to", "status", "role", "count", "format", "kind", "created", "tasks", "slot", "runId"]);
+const META_ALLOW = new Set(["via", "reason", "from", "to", "status", "role", "count", "format", "kind", "created", "tasks", "slot", "runId", "provider", "keyChanged", "embeddingChanged"]);
 
 function safeMetadata(meta: unknown): Record<string, string | number | boolean> | null {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;

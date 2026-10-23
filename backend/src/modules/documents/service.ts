@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Document, DocumentStatus } from "../../generated/prisma/client.js";
+import type { Document, DocumentStatus, Prisma } from "../../generated/prisma/client.js";
 import { db } from "../../lib/db.js";
 import { AppError, Errors } from "../../lib/errors.js";
 import { recordAudit } from "../../lib/audit.js";
@@ -7,6 +7,7 @@ import { logger } from "../../lib/logger.js";
 import { signToken, verifyToken } from "../../lib/crypto.js";
 import { getEnv } from "../../config/env.js";
 import type { SessionUser } from "../../auth/types.js";
+import { currentEmbeddingIdentity, isStale, sameIdentity, docIdentity, type EmbeddingIdentity } from "../ai/embedding-identity.js";
 import { enqueue } from "../jobs/queue.js";
 import { getLimits } from "./limits.js";
 import type { Storage } from "./storage/types.js";
@@ -24,11 +25,15 @@ export type DocumentView = {
   pageCount: number | null;
   chunkCount: number | null;
   embeddingModel: string | null;
+  /** Measured length of the stored vectors (null while unprocessed). */
+  embeddingDimension: number | null;
+  /** READY but indexed with a different embedding model/provider/dimension than the current configuration: excluded from search until re-embedded. */
+  embeddingStale: boolean;
   createdAt: string;
   processedAt: string | null;
 };
 
-export function toView(d: Document): DocumentView {
+export function toView(d: Document, current: EmbeddingIdentity | null = null): DocumentView {
   // storageKey / sha256 / owner id are deliberately not part of the view.
   return {
     id: d.id,
@@ -42,6 +47,8 @@ export function toView(d: Document): DocumentView {
     pageCount: d.pageCount,
     chunkCount: d.chunkCount,
     embeddingModel: d.embeddingModel,
+    embeddingDimension: d.embeddingDimension,
+    embeddingStale: isStale(d, current),
     createdAt: d.createdAt.toISOString(),
     processedAt: d.processedAt?.toISOString() ?? null,
   };
@@ -67,7 +74,8 @@ export async function listDocuments(user: SessionUser, opts: { ids?: string[] } 
     orderBy: { createdAt: "desc" },
     take: 500,
   });
-  return rows.map(toView);
+  const current = await currentEmbeddingIdentity(user.id);
+  return rows.map((r) => toView(r, current));
 }
 
 /** Ownership is part of the WHERE: foreign and missing ids are indistinguishable (404). */
@@ -78,7 +86,7 @@ async function ownedDocument(user: SessionUser, id: string): Promise<Document> {
 }
 
 export async function getDocument(user: SessionUser, id: string) {
-  return toView(await ownedDocument(user, id));
+  return toView(await ownedDocument(user, id), await currentEmbeddingIdentity(user.id));
 }
 
 export async function uploadDocuments(storage: Storage, user: SessionUser, files: UploadFile[]): Promise<UploadResult[]> {
@@ -142,16 +150,45 @@ async function uploadOne(storage: Storage, user: SessionUser, file: UploadFile):
   }
 }
 
+/** Puts a document back in the ingestion queue (idempotent through the job dedupe key). Returns false when it is already queued/running. */
+async function queueReprocess(tx: Prisma.TransactionClient, docId: string): Promise<boolean> {
+  const jobId = await enqueue(tx, { type: "ingest", payload: { documentId: docId }, dedupeKey: `ingest:${docId}`, maxAttempts: 4 });
+  if (!jobId) return false;
+  await tx.document.update({ where: { id: docId }, data: { status: "QUEUED", progress: 0, statusCode: null, statusDetail: null } });
+  return true;
+}
+
 export async function retryDocument(user: SessionUser, id: string): Promise<DocumentView> {
   const doc = await ownedDocument(user, id);
   // READY documents may be reprocessed (e.g. after changing the embedding model); in-flight ones may not.
   if (doc.status === "QUEUED" || doc.status === "PROCESSING") throw new AppError("CONFLICT", "This document is already being processed.");
   const updated = await db.$transaction(async (tx) => {
-    const jobId = await enqueue(tx, { type: "ingest", payload: { documentId: doc.id }, dedupeKey: `ingest:${doc.id}`, maxAttempts: 4 });
-    if (!jobId) throw new AppError("CONFLICT", "This document is already being processed.");
-    return tx.document.update({ where: { id: doc.id }, data: { status: "QUEUED", progress: 0, statusCode: null, statusDetail: null } });
+    if (!(await queueReprocess(tx, doc.id))) throw new AppError("CONFLICT", "This document is already being processed.");
+    return tx.document.findUniqueOrThrow({ where: { id: doc.id } });
   });
-  return toView(updated);
+  return toView(updated, await currentEmbeddingIdentity(user.id));
+}
+
+const REEMBED_MAX = 200;
+
+/**
+ * Re-embeds the caller's documents whose recorded embedding identity differs from the current configuration (AI_CONNECTION_SPEC §2).
+ * Reuses the normal ingestion job: ids, owner, names and permissions are untouched, and rag_agent writes the new chunks under a new
+ * `processingVersion` and switches atomically only when the new set is complete — the previous chunks stay until then.
+ */
+export async function reembedDocuments(user: SessionUser): Promise<{ queued: number; skipped: number }> {
+  const current = await currentEmbeddingIdentity(user.id);
+  if (!current) throw new AppError("NOT_CONFIGURED", "Set up your AI connection (API key and embedding model) in Settings first.");
+  const docs = await db.document.findMany({ where: { ownerId: user.id, status: { in: ["READY", "FAILED"] } }, orderBy: { createdAt: "asc" }, take: 2000 });
+  const todo = docs.filter((d) => !(d.status === "READY" && sameIdentity(docIdentity(d), current))).slice(0, REEMBED_MAX);
+  let queued = 0;
+  let skipped = 0;
+  for (const d of todo) {
+    const ok = await db.$transaction((tx) => queueReprocess(tx, d.id));
+    if (ok) queued++;
+    else skipped++;
+  }
+  return { queued, skipped };
 }
 
 export async function deleteDocument(storage: Storage, user: SessionUser, id: string): Promise<void> {

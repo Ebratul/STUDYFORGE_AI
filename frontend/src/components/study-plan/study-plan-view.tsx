@@ -47,7 +47,7 @@ export function PlanCardBody({ plan, busy, onGenerate }: { plan: PlanView | null
     return (
       <div className="space-y-2 text-sm" data-testid="plan-not-configured">
         <p className="text-muted-foreground">{t("The AI plan needs a model. Add your API key and choose a model first.")}</p>
-        <div className="flex flex-wrap gap-2"><Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/api-keys">{t("API keys")}</Link></Button><Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/providers">{t("AI providers")}</Link></Button><Button size="sm" className="rounded-lg" onClick={onGenerate} disabled={busy}>{t("Try again")}</Button></div>
+        <div className="flex flex-wrap gap-2"><Button asChild size="sm" variant="outline" className="rounded-lg"><Link href="/settings/providers">{t("AI connection")}</Link></Button><Button size="sm" className="rounded-lg" onClick={onGenerate} disabled={busy}>{t("Try again")}</Button></div>
       </div>
     );
   }

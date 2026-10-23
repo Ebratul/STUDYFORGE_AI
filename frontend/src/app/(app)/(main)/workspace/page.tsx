@@ -31,7 +31,7 @@ export default async function WorkspacePage() {
     { done: true, label: t("Create your account") },
     { done: me.user.emailVerified, label: t("Verify your email address"), href: "/settings/privacy" },
     { done: Boolean(profile.bio || (profile.displayName && profile.displayName !== me.user.name)), label: t("Complete your profile"), href: "/settings/profile" },
-    { done: summary.providersConnected > 0, label: t("Add an AI provider API key"), href: "/settings/api-keys" },
+    { done: summary.providersConnected > 0, label: t("Add an AI provider API key"), href: "/settings/providers" },
     { done: summary.hasDefaultModel, label: t("Choose your default model"), href: "/settings/providers" },
     { done: summary.hasEmbeddingModel, label: t("Choose an embedding model (needed to search documents)"), href: "/settings/providers" },
     { done: summary.documents.ready > 0, label: t("Upload and process your first document"), href: "/documents" },

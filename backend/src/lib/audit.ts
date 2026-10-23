@@ -24,6 +24,7 @@ export type AuditAction =
   | "ai.credential_deleted"
   | "ai.credential_tested"
   | "ai.preferences_updated"
+  | "ai.connection_saved"
   | "document.uploaded"
   | "document.deleted"
   | "document.downloaded"

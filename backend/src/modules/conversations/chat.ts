@@ -10,6 +10,7 @@ import { recordProviderEvent } from "../../lib/metrics.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import type { SessionUser } from "../../auth/types.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
+import { documentIdentitySelect, EXPECTED_DIMENSION, guidanceFor, isCompatible, STALE_DOCUMENTS_MESSAGE, STALE_SOME_DOCUMENTS_WARNING } from "../ai/embedding-identity.js";
 import { resolveModel } from "../ai/preferences.js";
 import { toWire } from "../ai/providers.js";
 import { assertWithinQuota, recordUsage } from "../ai/usage.js";
@@ -70,14 +71,14 @@ export async function prepareChat(
   await assertWithinQuota(user);
 
   const chatModel = await resolveModel(user.id, "CHAT");
-  if (!chatModel) throw new AppError("NOT_CONFIGURED", "Choose a default model in Settings → AI providers before chatting.");
+  if (!chatModel) throw new AppError("NOT_CONFIGURED", "Choose a default model in Settings → AI connection before chatting.");
   const chatKey = await getDecryptedKey(user.id, chatModel.provider);
   const chat = chatModel; // narrowed copy for use inside the generator closure
 
   // Documents: only the caller's own READY documents attached to this conversation.
   const attachedIds = conv.documents.map((d) => d.documentId);
   const ready = attachedIds.length
-    ? await db.document.findMany({ where: { id: { in: attachedIds }, ownerId: user.id, status: "READY" }, select: { id: true, embeddingModel: true } })
+    ? await db.document.findMany({ where: { id: { in: attachedIds }, ownerId: user.id, status: "READY" }, select: documentIdentitySelect })
     : [];
 
   const warnings: string[] = [];
@@ -86,16 +87,17 @@ export async function prepareChat(
   let documentIds: string[] = [];
   if (ready.length) {
     if (!embedding) {
-      if (conv.mode === "DOCUMENT_ONLY") throw new AppError("NOT_CONFIGURED", "Choose an embedding model in Settings → AI providers to search your documents.");
+      if (conv.mode === "DOCUMENT_ONLY") throw new AppError("NOT_CONFIGURED", "Choose an embedding model in Settings → AI connection to search your documents.");
       warnings.push("Your documents were not used because no embedding model is configured.");
     } else {
-      const matching = ready.filter((d) => d.embeddingModel === embedding.modelId);
+      // Same provider + model + dimension as the vectors in the index: never mix embedding spaces (AI_CONNECTION_SPEC §3).
+      const identity = { provider: embedding.provider, model: embedding.modelId, dimension: embedding.embeddingDimension ?? EXPECTED_DIMENSION };
+      const matching = ready.filter((d) => isCompatible(d, identity));
       if (matching.length === 0) {
-        if (conv.mode === "DOCUMENT_ONLY")
-          throw new AppError("CONFLICT", "Your documents were processed with a different embedding model than the one currently selected. Reprocess them or switch back in Settings.");
-        warnings.push("Your documents were not used: they were processed with a different embedding model.");
+        if (conv.mode === "DOCUMENT_ONLY") throw new AppError("CONFLICT", STALE_DOCUMENTS_MESSAGE, { reason: "EMBEDDING_STALE" });
+        warnings.push(STALE_DOCUMENTS_MESSAGE);
       } else {
-        if (matching.length < ready.length) warnings.push("Some documents were skipped because they were processed with a different embedding model.");
+        if (matching.length < ready.length) warnings.push(STALE_SOME_DOCUMENTS_WARNING);
         const key = await getDecryptedKey(user.id, embedding.provider);
         embeddingCreds = { provider: toWire(embedding.provider), api_key: key.key, model: embedding.modelId };
         documentIds = matching.map((d) => d.id);
@@ -202,7 +204,7 @@ export async function prepareChat(
           final = ev.data;
           outcome = "final";
         } else if (ev.event === "error") {
-          failure = { code: ev.data.code, message: ev.data.message, retryable: Boolean(ev.data.retryable), retryAfter: ev.data.retry_after_seconds ?? null };
+          failure = { code: ev.data.code, message: guidanceFor(ev.data.code, ev.data.message), retryable: Boolean(ev.data.retryable), retryAfter: ev.data.retry_after_seconds ?? null };
           outcome = "error";
         }
       }

@@ -57,7 +57,7 @@ export const EXTRA_KEYS = [
   msg("Time is up. Your saved answers were submitted."),
   msg("Some answers are invalid."),
   msg("Result not found."),
-  msg("Choose a default model in Settings → AI providers to get AI feedback."),
+  msg("Choose a default model in Settings → AI connection to get AI feedback."),
   msg("This group is full."),
   msg("That invitation code is invalid or has expired."),
   msg("Only the group's owner or an admin can do that."),

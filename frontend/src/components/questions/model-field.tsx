@@ -33,7 +33,7 @@ export function ModelField({ configured, task, override, onOverride }: { configu
           <AlertTriangle className="text-warning" aria-hidden />
           <AlertTitle>No model chosen for {task} generation</AlertTitle>
           <AlertDescription>
-            Add an API key and pick a model in <Link href="/settings/providers" className="font-medium text-primary underline">Settings → AI providers</Link>, or choose one for this run below. {task} generation falls back to your default model.
+            Add an API key and pick a model in <Link href="/settings/providers" className="font-medium text-primary underline">Settings → AI connection</Link>, or choose one for this run below. {task} generation falls back to your default model.
           </AlertDescription>
         </Alert>
       )}

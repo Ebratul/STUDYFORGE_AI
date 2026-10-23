@@ -65,7 +65,7 @@ export default async function DashboardPage() {
               );
             })}
             {s.providersConnected === 0 && (
-              <p className="text-sm text-muted-foreground sm:col-span-2">{rich("No provider connected yet. {link} to start.", { link: <Link href="/settings/api-keys" className="text-primary underline">{t("Add an API key")}</Link> })}</p>
+              <p className="text-sm text-muted-foreground sm:col-span-2">{rich("No provider connected yet. {link} to start.", { link: <Link href="/settings/providers" className="text-primary underline">{t("Add an API key")}</Link> })}</p>
             )}
           </CardContent>
         </Card>

@@ -12,7 +12,7 @@ export type AnalysisModel = { provider: AiProvider; modelId: string; key: string
 /** The ANALYSIS task preference, falling back to the user's default model. Throws NOT_CONFIGURED when there is none (or no key for it). */
 export async function resolveAnalysisModel(userId: string): Promise<AnalysisModel> {
   const m = await resolveModel(userId, "ANALYSIS");
-  if (!m) throw new AppError("NOT_CONFIGURED", "Choose a default model in Settings → AI providers to get AI feedback.");
+  if (!m) throw new AppError("NOT_CONFIGURED", "Choose a default model in Settings → AI connection to get AI feedback.");
   const { key, credentialId } = await getDecryptedKey(userId, m.provider);
   return { provider: m.provider, modelId: m.modelId, key, credentialId, params: m.params };
 }

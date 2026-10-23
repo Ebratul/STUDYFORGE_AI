@@ -140,7 +140,7 @@ export function ChatView({ conversationId }: { conversationId: string }) {
             <Alert className="border-warning/40 bg-warning-soft">
               <AlertTriangle aria-hidden />
               <AlertTitle>Choose a model to start chatting</AlertTitle>
-              <AlertDescription>Add an API key and pick a default model in <Link href="/settings/api-keys" className="font-medium underline">API keys</Link> and <Link href="/settings/providers" className="font-medium underline">AI providers</Link>.</AlertDescription>
+              <AlertDescription>Add your API key and model IDs in <Link href="/settings/providers" className="font-medium underline">AI connection</Link>.</AlertDescription>
             </Alert>
           )}
           {c?.mode === "DOCUMENT_ONLY" && (
@@ -194,7 +194,7 @@ export function ChatView({ conversationId }: { conversationId: string }) {
                 <div className="flex flex-wrap gap-2">
                   {err.retryable && lastAssistantOrUser(messages) && <Button size="sm" variant="outline" className="rounded-xl" onClick={() => void stream.regenerate()}>Retry</Button>}
                   {(err.code === "NOT_CONFIGURED" || err.code === "CONFLICT") && <Button asChild size="sm" variant="outline" className="rounded-xl"><Link href="/settings/providers">Open model settings</Link></Button>}
-                  {(err.code === "PROVIDER_AUTH_INVALID" || err.code === "MODEL_NOT_FOUND") && <Button asChild size="sm" variant="outline" className="rounded-xl"><Link href={err.code === "MODEL_NOT_FOUND" ? "/settings/providers" : "/settings/api-keys"}>{err.code === "MODEL_NOT_FOUND" ? "Change model" : "Fix API key"}</Link></Button>}
+                  {(err.code === "PROVIDER_AUTH_INVALID" || err.code === "MODEL_NOT_FOUND") && <Button asChild size="sm" variant="outline" className="rounded-xl"><Link href="/settings/providers">{err.code === "MODEL_NOT_FOUND" ? "Change model" : "Fix API key"}</Link></Button>}
                   <Button size="sm" variant="ghost" className="rounded-xl" onClick={stream.clearError}>Dismiss</Button>
                 </div>
               </AlertDescription>

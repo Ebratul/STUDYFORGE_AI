@@ -31,6 +31,16 @@ export type ModelInfo = {
   embedding_dimensions?: string;
 };
 
+/** One step of the connection validation (AI_CONNECTION_SPEC §1). `ok: null` + `skipped` = not run because an earlier step failed. */
+export type ValidationCheck = { ok: boolean | null; skipped?: boolean; code?: string; message?: string; latency_ms?: number; dimension?: number };
+export type ValidateConfigRequest = { provider: ProviderId; api_key: string; chat_model: string; embedding_model: string };
+export type ValidateConfigResult = {
+  ok: boolean;
+  provider: ProviderId;
+  embedding_dimension: number | null;
+  checks: { auth: ValidationCheck; chat: ValidationCheck; embedding: ValidationCheck };
+};
+
 export type ModelsResult = { provider: ProviderId; fetched_at: string; models: ModelInfo[] };
 
 export type Credentials = { provider: ProviderId; api_key: string; model: string };
@@ -203,6 +213,8 @@ export type IngestResult =
       text_length?: number | null;
       chunk_count?: number | null;
       embedding_model?: string | null;
+      /** Verified length of the vectors that were stored (AI_CONNECTION_SPEC §1). */
+      embedding_dimension?: number | null;
       code?: string | null;
       message?: string | null;
     }
@@ -227,6 +239,8 @@ export interface RagAgentClient {
   providers(): Promise<ProviderCatalogEntry[]>;
   testProvider(provider: ProviderId, apiKey: string): Promise<TestResult>;
   listModels(provider: ProviderId, apiKey: string): Promise<ModelsResult>;
+  /** Auth + one tiny chat call + one tiny embedding call with the given key and model ids; nothing is stored. */
+  validateConfig(body: ValidateConfigRequest, signal?: AbortSignal): Promise<ValidateConfigResult>;
   ingest(params: IngestParams, file: Uint8Array, onProgress: (stage: string, progress: number) => void, signal?: AbortSignal): Promise<IngestResult>;
   chatStream(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent>;
   generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal): AsyncGenerator<GenerateEvent>;
@@ -337,6 +351,16 @@ export class HttpRagAgentClient implements RagAgentClient {
       headers: this.headers({ "content-type": "application/json" }),
       body: JSON.stringify({ provider, api_key: apiKey }),
       timeoutMs: 30_000,
+    });
+  }
+
+  validateConfig(body: ValidateConfigRequest, signal?: AbortSignal) {
+    return this.json<ValidateConfigResult>("/v1/providers/validate", {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify(body),
+      timeoutMs: 75_000, // three checks, each bounded to 20 s by rag_agent
+      ...(signal ? { signal } : {}),
     });
   }
 

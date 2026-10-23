@@ -7,6 +7,7 @@ import { AppError } from "../../lib/errors.js";
 import { requireAuth } from "../../http/middleware.js";
 import type { AppEnv } from "../../http/context.js";
 import { readJson } from "../../http/body.js";
+import { connectionInput, getConnection, saveConnection } from "./connection.js";
 import { apiKeySchema, deleteCredential, listCredentials, saveCredential, testCandidate, testStored } from "./credentials.js";
 import { getModels } from "./models.js";
 import { getPreferences, LIMITS, preferencesInput, setPreferences, TASKS } from "./preferences.js";
@@ -86,6 +87,11 @@ export function aiRoutes(rag: RagAgentClient) {
       return mapRagError(err);
     }
   });
+
+  // The single, simplified configuration (AI_CONNECTION_SPEC): API key + chat model id + embedding model id. Responses are masked.
+  r.get("/connection", async (c) => c.json({ connection: await getConnection(c.get("user")) }));
+
+  r.put("/connection", async (c) => c.json(await saveConnection(rag, c.get("user"), await readJson(c.req.raw, connectionInput))));
 
   r.get("/preferences", async (c) => c.json(await getPreferences(c.get("user"))));
 

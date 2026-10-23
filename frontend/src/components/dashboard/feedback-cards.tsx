@@ -56,7 +56,7 @@ export function FeedbackCards({ items }: { items: RecentFeedback[] }) {
               <Button size="sm" variant="outline" className="rounded-lg" disabled={busy === f.attemptId} onClick={() => void retry(f.attemptId)}>{busy === f.attemptId ? <Loader2 className="animate-spin" aria-hidden /> : <RefreshCw aria-hidden />} {t("Retry")}</Button>
             </div>
           )}
-          {f.status === "NOT_CONFIGURED" && <p className="mt-1.5 text-sm text-muted-foreground">{t("Choose a model to get feedback:")} <Link href="/settings/providers" className="font-medium text-primary underline">{t("AI providers")}</Link>.</p>}
+          {f.status === "NOT_CONFIGURED" && <p className="mt-1.5 text-sm text-muted-foreground">{t("Choose a model to get feedback:")} <Link href="/settings/providers" className="font-medium text-primary underline">{t("AI connection")}</Link>.</p>}
           {f.status === "NONE" && (
             <Button size="sm" variant="outline" className="mt-1.5 rounded-lg" disabled={busy === f.attemptId} onClick={() => void retry(f.attemptId)}><Bot aria-hidden /> {t("Get AI feedback")}</Button>
           )}

@@ -49,57 +49,7 @@ async function ask(page: Page, text: string) {
   await page.getByRole("button", { name: "Send message" }).click();
 }
 
-test.describe("API keys (bring your own key)", () => {
-  test("test before saving, save masked, never shown again, rotate and delete", async ({ page }) => {
-    await register(page);
-    await page.goto("/settings/api-keys");
-    const card = page.getByTestId("provider-mock");
-    await expect(card.getByText("No key")).toBeVisible();
-
-    await card.getByRole("button", { name: "Add key" }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("API key").fill("mock-wrong-key-1");
-    await dialog.getByRole("button", { name: "Test connection" }).click();
-    await expect(dialog.getByRole("status")).toContainText("rejected this API key");
-
-    await dialog.getByLabel("API key").fill(VALID_KEY);
-    await dialog.getByRole("button", { name: "Test connection" }).click();
-    await expect(dialog.getByRole("status")).toContainText("Connection works");
-    await dialog.getByRole("button", { name: "Save key" }).click();
-
-    await expect(card.getByText("Not tested yet")).toBeVisible();
-    await expect(card.getByText("••••-key")).toBeVisible();
-    await card.getByRole("button", { name: "Test", exact: true }).click();
-    await expect(card.getByText("Connected")).toBeVisible();
-
-    // The key is gone from the page, from every API response and from storage.
-    expect(await page.content()).not.toContain(VALID_KEY);
-    expect(await (await api(page, "GET", "/api/ai/credentials")).text()).not.toContain(VALID_KEY);
-    expect(await (await api(page, "GET", "/api/ai/providers")).text()).not.toContain(VALID_KEY);
-    await page.reload();
-    expect(await page.content()).not.toContain(VALID_KEY);
-    expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(VALID_KEY);
-
-    await card.getByRole("button", { name: "Rotate key" }).click();
-    await page.getByRole("dialog").getByLabel("API key").fill("mock-valid-key");
-    await page.getByRole("dialog").getByRole("button", { name: "Replace key" }).click();
-    await expect(card.getByText(/Rotated/)).toBeVisible();
-
-    await card.getByRole("button", { name: "Delete" }).click();
-    await page.getByRole("dialog").getByRole("button", { name: "Delete key" }).click();
-    await expect(card.getByText("No key")).toBeVisible();
-  });
-
-  test("malformed keys get a field error and nothing is stored", async ({ page }) => {
-    await register(page);
-    await page.goto("/settings/api-keys");
-    await page.getByTestId("provider-mock").getByRole("button", { name: "Add key" }).click();
-    await page.getByRole("dialog").getByLabel("API key").fill("short");
-    await page.getByRole("dialog").getByRole("button", { name: "Save key" }).click();
-    await expect(page.getByRole("dialog").getByRole("alert")).toContainText("too short");
-    expect((await (await api(page, "GET", "/api/ai/credentials")).json()).items).toEqual([]);
-  });
-
+test.describe("API keys are private to their owner", () => {
   test("other users' keys are never visible", async ({ browser, baseURL }) => {
     const a = await (await browser.newContext({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.51" } })).newPage();
     const b = await (await browser.newContext({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.52" } })).newPage();
@@ -111,53 +61,6 @@ test.describe("API keys (bring your own key)", () => {
     await a.context().close();
     await b.context().close();
     void baseURL;
-  });
-});
-
-test.describe("model settings", () => {
-  test("lists provider models, validates limits, saves and persists", async ({ page }) => {
-    await register(page);
-    await configureAi(page, { embedding: false });
-    await page.goto("/settings/providers");
-    await expect(page.getByRole("list", { name: "Available models" }).first()).toContainText("mock-chat");
-    await expect(page.getByText(/models reported by the provider/).first()).toBeVisible();
-
-    await page.getByLabel("Temperature").fill("5");
-    await page.getByRole("button", { name: "Save settings" }).click();
-    await expect(page.getByText("Between 0 and 2.")).toBeVisible();
-    await page.getByLabel("Temperature").fill("0.4");
-    await page.getByLabel("Max output tokens").fill("512");
-
-    await page.getByRole("switch", { name: /Use default|Custom/ }).first().click(); // Conversation override on
-    // Embedding: choose the provider, then a model from the list the provider returned
-    await page.locator("#embedding-provider").click();
-    await page.getByRole("option", { name: "Mock (testing only)" }).click();
-    await page.getByRole("button", { name: /mock-embed/ }).click();
-    await page.getByRole("button", { name: "Save settings" }).click();
-    await expect(page.getByText("Model settings saved")).toBeVisible();
-
-    await page.reload();
-    await expect(page.getByLabel("Temperature")).toHaveValue("0.4");
-    await expect(page.getByLabel("Max output tokens")).toHaveValue("512");
-    const prefs = await (await api(page, "GET", "/api/ai/preferences")).json();
-    expect(prefs.default).toMatchObject({ provider: "MOCK", modelId: "mock-chat", temperature: 0.4, maxTokens: 512 });
-    expect(prefs.tasks.EMBEDDING).toMatchObject({ modelId: "mock-embed" });
-  });
-
-  test("an invalid model id is flagged and not saved", async ({ page }) => {
-    await register(page);
-    await configureAi(page, { embedding: false });
-    await page.goto("/settings/providers");
-    await page.locator("#default-model").fill("bad;id");
-    await expect(page.getByText(/letters, digits/)).toBeVisible();
-    await page.getByRole("button", { name: "Save settings" }).click();
-    expect((await (await api(page, "GET", "/api/ai/preferences")).json()).default.modelId).toBe("mock-chat");
-  });
-
-  test("without any key the page guides the user to add one", async ({ page }) => {
-    await register(page);
-    await page.goto("/settings/providers");
-    await expect(page.getByText("Connect a provider first")).toBeVisible();
   });
 });
 
@@ -427,7 +330,7 @@ test.describe("accessibility of the new screens", () => {
     await newConversation(page, "General question");
     await ask(page, "Hello");
     await expect(page.getByTestId("assistant-message").last()).toHaveAttribute("data-status", "COMPLETE");
-    for (const path of ["/settings/api-keys", "/settings/providers", "/documents", page.url().replace(/^https?:\/\/[^/]+/, "")]) {
+    for (const path of ["/settings/providers", "/documents", page.url().replace(/^https?:\/\/[^/]+/, "")]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();

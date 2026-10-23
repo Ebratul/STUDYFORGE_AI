@@ -5,6 +5,7 @@ import { takeExam } from "./dashboard-helpers";
 import { publishExam } from "./exam-helpers";
 import { newUser, type TestUser } from "./group-helpers";
 import { answerExamViaUi, examKeyFor, loginViaUi, startAttemptViaUi } from "./journey-helpers";
+import { connectViaForm } from "./connection-helpers";
 import { api, VALID_KEY } from "./questions-helpers";
 
 /**
@@ -57,26 +58,10 @@ test("1. register, sign out and sign back in", async () => {
 
 test("2. configure the mock provider key, the default chat model and the embedding model in Settings", async () => {
   const p = owner.page;
-  await p.goto("/settings/api-keys");
-  const card = p.getByTestId("provider-mock");
-  await card.getByRole("button", { name: "Add key" }).click();
-  const dialog = p.getByRole("dialog");
-  await dialog.getByLabel("API key").fill(VALID_KEY);
-  await dialog.getByRole("button", { name: "Test connection" }).click();
-  await expect(dialog.getByRole("status")).toContainText("Connection works");
-  await dialog.getByRole("button", { name: "Save key" }).click();
-  await expect(card.getByText("••••-key")).toBeVisible();
+  await connectViaForm(p); // key + chat model + embedding model through the three inputs; the server tests all three before saving
   expect(await p.content()).not.toContain(VALID_KEY); // the key never comes back to the browser
-
-  await p.goto("/settings/providers");
-  await p.locator("#default-provider").click();
-  await p.getByRole("option", { name: "Mock (testing only)" }).click();
-  await p.getByRole("button", { name: /^mock-chat(?![\w-])/ }).first().click();
-  await p.locator("#embedding-provider").click();
-  await p.getByRole("option", { name: "Mock (testing only)" }).click();
-  await p.getByRole("button", { name: /^mock-embed(?![\w-])/ }).first().click();
-  await p.getByRole("button", { name: "Save settings" }).click();
-  await expect(p.getByText("Model settings saved")).toBeVisible();
+  await expect(p.getByTestId("status-key")).toContainText("••••-key");
+  await expect(p.getByTestId("status-embedding")).toHaveText("mock-embed");
   const prefs = await (await api(p, "GET", "/api/ai/preferences")).json();
   expect(prefs.default).toMatchObject({ provider: "MOCK", modelId: "mock-chat" });
   expect(prefs.tasks.EMBEDDING).toMatchObject({ modelId: "mock-embed" });
@@ -381,11 +366,9 @@ test("12a. recovery: an AI provider failure never touches the verified result, a
 test("12b. recovery: deleting the API key shows 'not configured' with a Settings link; re-adding it and retrying works", async () => {
   test.setTimeout(150_000);
   const p = owner.page;
-  await p.goto("/settings/api-keys");
-  const card = p.getByTestId("provider-mock");
-  await card.getByRole("button", { name: "Delete" }).click();
-  await p.getByRole("dialog").getByRole("button", { name: "Delete key" }).click();
-  await expect(card.getByText("No key")).toBeVisible();
+  expect((await api(p, "DELETE", "/api/ai/credentials/mock")).ok()).toBe(true); // the key is removed (API; the connection form has no delete action)
+  await p.goto("/settings/providers");
+  await expect(p.getByTestId("status-key")).toContainText("No key");
 
   const { attemptId } = await takeExam(p, ["right", "wrong", "wrong"], { title: "Recovery without a key" });
   const resultId = await resultIdOf(attemptId);
@@ -395,14 +378,12 @@ test("12b. recovery: deleting the API key shows 'not configured' with a Settings
   if (await p.getByRole("button", { name: "Get AI feedback" }).count()) await p.getByRole("button", { name: "Get AI feedback" }).click();
   const nc = p.getByTestId("ai-not-configured");
   await expect(nc).toBeVisible({ timeout: 60_000 });
-  await expect(nc.getByRole("link", { name: "API keys" })).toHaveAttribute("href", "/settings/api-keys"); // CTA into Settings
-  await expect(nc.getByRole("link", { name: "AI providers" })).toHaveAttribute("href", "/settings/providers");
+  await expect(nc.getByRole("link", { name: "AI connection" })).toHaveAttribute("href", "/settings/providers"); // CTA into Settings
   await expect(p.getByTestId("percentage")).toHaveText("33.33%");
   expect((await analysisOf(resultId))?.status).toBe("NOT_CONFIGURED");
 
-  // recover: add the key and a model again (setup through the API: the UI path was exercised in step 2), then Retry
-  expect((await api(p, "PUT", "/api/ai/credentials/mock", { apiKey: VALID_KEY })).ok()).toBe(true);
-  expect((await api(p, "PUT", "/api/ai/preferences", { default: { provider: "mock", modelId: "mock-chat" }, tasks: { EMBEDDING: { provider: "mock", modelId: "mock-embed" } } })).ok()).toBe(true);
+  // recover: enter the key and both model ids again in the connection form, then Retry
+  await connectViaForm(p);
   await p.goto(`/attempts/${attemptId}/result`);
   await p.getByTestId("ai-not-configured").getByRole("button", { name: "Try again" }).click();
   await expect(p.getByTestId("ai-ready")).toBeVisible({ timeout: 60_000 });

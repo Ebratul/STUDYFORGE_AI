@@ -166,7 +166,7 @@ test.describe("MCQ generation", () => {
     await page.goto("/mcq");
     await expect(page.getByText("No model chosen for MCQ generation")).toBeVisible();
     await expect(generateButton(page)).toBeDisabled();
-    await expect(page.getByRole("link", { name: "Settings → AI providers" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Settings → AI connection" })).toBeVisible();
   });
 });
 

@@ -1,5 +1,5 @@
 import type {
-  AnalyzePlanRequest, AnalyzeResponse, AnalyzeResultRequest, ChatEvent, ChatRequest, GenerateEvent, GenerateKind, GenerateRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, RagAnalysisContent, RagPlanContent, TestResult,
+  AnalyzePlanRequest, AnalyzeResponse, AnalyzeResultRequest, ChatEvent, ChatRequest, GenerateEvent, ValidateConfigRequest, ValidateConfigResult, GenerateKind, GenerateRequest, IngestParams, IngestResult, ModelsResult, ProviderCatalogEntry, ProviderId, RagAgentClient, RagAnalysisContent, RagPlanContent, TestResult,
 } from "../../src/clients/rag-agent.js";
 import { RagAgentError } from "../../src/clients/rag-agent.js";
 import { defaultAnalyzePlan, defaultAnalyzeResult } from "./fake-analysis.js";
@@ -16,6 +16,24 @@ export const CATALOG: ProviderCatalogEntry[] = [
 export class FakeRag implements RagAgentClient {
   testCalls: { provider: ProviderId; apiKey: string }[] = [];
   chatCalls: ChatRequest[] = [];
+  /** Every connection validation the backend asked for (so tests can assert the exact model ids and key hand-off). */
+  validateCalls: ValidateConfigRequest[] = [];
+  validateError: Error | null = null;
+  /** Default: auth ok for `validKeys`; chat model `bad-chat*` → MODEL_NOT_FOUND; embedding `bad-embed*` → MODEL_NOT_FOUND, `wide-embed*` → 3072-d mismatch. */
+  validateScript: (req: ValidateConfigRequest) => ValidateConfigResult = (req) => {
+    const skipped = { ok: null, skipped: true } as const;
+    if (!this.validKeys.has(req.api_key)) {
+      return { ok: false, provider: req.provider, embedding_dimension: null, checks: { auth: { ok: false, code: "PROVIDER_AUTH_INVALID", message: "The AI provider rejected the API key. Check that the key is valid and has access." }, chat: skipped, embedding: skipped } };
+    }
+    const chat = req.chat_model.startsWith("bad-chat") ? { ok: false, code: "MODEL_NOT_FOUND", message: "The selected model was not found or is not available for this key." } : { ok: true, latency_ms: 20 };
+    const wide = req.embedding_model.startsWith("wide-embed");
+    const embedding = req.embedding_model.startsWith("bad-embed")
+      ? { ok: false, code: "MODEL_NOT_FOUND", message: "The selected model was not found or is not available for this key." }
+      : wide
+        ? { ok: false, code: "EMBEDDING_DIMENSION_MISMATCH", message: "This model produces 3072-dimensional vectors; StudyForge stores 1536.", dimension: 3072 }
+        : { ok: true, latency_ms: 30, dimension: 1536 };
+    return { ok: chat.ok && embedding.ok, provider: req.provider, embedding_dimension: wide ? 3072 : embedding.ok ? 1536 : null, checks: { auth: { ok: true, latency_ms: 10 }, chat, embedding } };
+  };
   generateCalls: { kind: GenerateKind; body: GenerateRequest }[] = [];
   ingestCalls: { params: IngestParams; bytes: number }[] = [];
   modelCalls = 0;
@@ -52,6 +70,11 @@ export class FakeRag implements RagAgentClient {
         { id: "mock-embed", capabilities: { chat: false, embeddings: true, streaming: false, structured_output: "no", tools: "no" }, capability_source: "catalogue" },
       ],
     };
+  }
+  async validateConfig(body: ValidateConfigRequest): Promise<ValidateConfigResult> {
+    this.validateCalls.push(body);
+    if (this.validateError) throw this.validateError;
+    return this.validateScript(body);
   }
   async ingest(params: IngestParams, file: Uint8Array, onProgress: (s: string, p: number) => void) {
     this.ingestCalls.push({ params, bytes: file.byteLength });

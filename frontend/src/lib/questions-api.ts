@@ -11,7 +11,7 @@ export const toGenerationError = (e: ApiError): GenerationErrorInfo => ({
 /** Plain-language explanation of a generation failure. Never shows raw provider text. */
 export function describeGenerationError(e: GenerationErrorInfo, ctx: { grounding?: string } = {}): { title: string; message: string; settingsCta?: boolean } {
   switch (e.code) {
-    case "NOT_CONFIGURED": return { title: "Set up an AI model first", message: e.message || "Add an API key and choose a model in Settings → AI providers.", settingsCta: true };
+    case "NOT_CONFIGURED": return { title: "Set up an AI model first", message: e.message || "Add an API key and choose a model in Settings → AI connection.", settingsCta: true };
     case "QUOTA_EXCEEDED": return { title: "Daily AI limit reached", message: e.message };
     case "RATE_LIMITED": return { title: "Slow down a little", message: e.retryAfter ? `Too many generation requests. Try again in about ${e.retryAfter} seconds.` : "Too many generation requests. Wait a moment and try again." };
     case "CONFLICT": return { title: "Another generation is running", message: e.message || "Wait for your current generation to finish, or try again in a few minutes." };
