@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field, SecretStr
 
+from app.logging import request_id_var
+from app.providers.validation import ValidateBody, validate_connection
 from app.redact import bind_secrets
 from app.security import require_service_token
 
@@ -41,3 +43,12 @@ async def list_models(body: ProviderKeyBody, request: Request) -> dict:
         "fetched_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "models": [m.model_dump(exclude_none=True) for m in models],
     }
+
+
+@router.post("/validate")
+async def validate_provider(body: ValidateBody, request: Request) -> dict:
+    """AI_CONNECTION_SPEC §1: auth -> chat -> embedding, minimal paid calls. Always 200 for a processed request."""
+    provider = request.app.state.registry.get(body.provider)  # unknown provider (or mock when disabled) -> 422 VALIDATION
+    with bind_secrets([body.api_key.get_secret_value()]):
+        res = await validate_connection(provider, body, request.app.state.settings, request_id_var.get(None))
+    return res.to_wire()

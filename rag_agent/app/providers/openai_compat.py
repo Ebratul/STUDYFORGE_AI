@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import time
 from collections.abc import AsyncIterator
@@ -448,6 +449,54 @@ class OpenAICompatProvider:
                     raise ProviderError(ErrorCode.EMBEDDING_DIMENSION_MISMATCH, retryable=False)
             vectors.extend(got)
         return EmbedResult(vectors=vectors, usage=Usage())
+
+    async def probe_embedding(self, req: EmbedRequest) -> int:
+        """Connection validation: ONE embeddings request for the first input; returns the MEASURED vector length.
+
+        Unlike `embed()` this does not enforce EMBEDDING_DIMENSIONS (so a 3072-d model can be reported accurately), but it still
+        requires exactly one non-empty vector of finite numbers. Raw httpx (not LangChain) so nothing is decoded or reshaped on the way.
+        """
+        if not self.supports_embeddings:
+            raise ProviderError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "This provider does not offer embeddings. Choose OpenAI or OpenRouter for document embeddings.",
+            )
+        body: dict[str, Any] = {"model": req.model, "input": req.inputs[:1], "encoding_format": "float"}
+        dim_param = self.embedding_dimensions_param(req.model)
+        if dim_param is not None:
+            body["dimensions"] = dim_param
+        headers = {**self._auth_headers(req.api_key), "Content-Type": "application/json"}
+        timeout = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)
+
+        async def once() -> int:
+            try:
+                async with asyncio.timeout(20.0):
+                    async with httpx.AsyncClient(base_url=self.base_url, timeout=timeout, follow_redirects=False) as client:
+                        resp = await client.post("/embeddings", json=body, headers=headers)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise self.normalize_error(exc, where="embed") from None
+            if resp.status_code != 200:
+                raise classify_http(resp.status_code, _safe_json(resp), resp.headers, where="embed")
+            return _measure(_safe_json(resp))
+
+        return await with_retries(once, lambda e: self.normalize_error(e, where="embed"))
+
+
+def _measure(payload: Any) -> int:
+    """Length of the single returned embedding; anything malformed or non-finite is a PROVIDER_ERROR (never a guess)."""
+    bad = ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected embedding response.", retryable=False)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+        raise bad
+    vec = data[0].get("embedding")
+    if not isinstance(vec, list) or not vec:
+        raise bad
+    for x in vec:
+        if isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x):
+            raise bad
+    return len(vec)
 
 
 def _safe_json(resp: httpx.Response) -> Any:

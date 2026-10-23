@@ -70,7 +70,8 @@ async def precheck_document(pool: AsyncConnectionPool, meta: IngestMeta) -> None
 
 
 def _result(status: str, *, code: str | None = None, message: str | None = None, page_count: int | None = None,
-            text_length: int = 0, chunk_count: int = 0, model: str | None = None) -> dict[str, Any]:
+            text_length: int = 0, chunk_count: int = 0, model: str | None = None,
+            dimension: int | None = None) -> dict[str, Any]:
     return {
         "type": "result",
         "status": status,
@@ -78,6 +79,7 @@ def _result(status: str, *, code: str | None = None, message: str | None = None,
         "text_length": text_length,
         "chunk_count": chunk_count,
         "embedding_model": model,
+        "embedding_dimension": dimension,
         "code": code,
         "message": message,
     }
@@ -158,7 +160,8 @@ async def _run(settings: Settings, pool: AsyncConnectionPool, registry: Provider
         yield _failed(outcome, page_count=extracted.page_count)
         return
     log_event(log, "ingest_stored", document_id=doc, chunks=total)
-    yield _result("READY", page_count=extracted.page_count, text_length=text_length, chunk_count=total, model=meta.embedding.model)
+    yield _result("READY", page_count=extracted.page_count, text_length=text_length, chunk_count=total, model=meta.embedding.model,
+                  dimension=len(vectors[0]) if vectors else None)
 
 
 INSERT_SQL = (

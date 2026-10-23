@@ -144,7 +144,7 @@ Response: `application/x-ndjson`, one JSON object per line, flushed as produced:
 {"type":"progress","stage":"chunk","progress":35}
 {"type":"progress","stage":"embed","progress":70}
 {"type":"progress","stage":"store","progress":95}
-{"type":"result","status":"READY","page_count":12,"text_length":48210,"chunk_count":31,"embedding_model":"text-embedding-3-small","code":null,"message":null}
+{"type":"result","status":"READY","page_count":12,"text_length":48210,"chunk_count":31,"embedding_model":"text-embedding-3-small","embedding_dimension":1536,"code":null,"message":null}
 ```
 or `{"type":"result","status":"NEEDS_OCR"|"FAILED","code":"…","message":"safe text", ...}` for *expected* outcomes, or
 `{"type":"error","code":"PROVIDER_RATE_LIMITED","message":"…","retryable":true,"retry_after_seconds":8}` for provider/infra errors.
@@ -317,3 +317,24 @@ Two **JSON** (non-streaming) endpoints, bearer-protected:
 * Workflow (LangGraph, typed state, keys only in closures): `validate → prepare → generate_structured → verify → [repair once] → finalize | error`; ≤2 provider rounds; deterministic verification described in `README.md` ("Result analysis and study plans").
 * Mock provider markers (in `exam.title` or any `topic`): `[[fail]]` (`PROVIDER_UNAVAILABLE`), `[[rate-limit]]` (429, retry_after 3), `[[bad-json-once]]`, `[[bad-json-always]]`, `[[ungrounded]]` (invents a number and a topic → must be rejected), `[[slow]]` (~20 s).
 * Tests: `tests/test_analysis_{verify,graph,api}.py` (+ `analysis_utils.py`); all use the mock provider or scripted fakes.
+
+## 11. Connection validation (AI connection form)
+
+Normative text: `backend/docs/AI_CONNECTION_SPEC.md` §1. Implemented in `app/providers/validation.py`, route `POST /v1/providers/validate` (bearer-protected).
+
+Request: `{"provider","api_key","chat_model","embedding_model"}` (strict, no extra keys; model ids trimmed, 1–200 chars; unknown provider, and `mock` when it is disabled or `APP_ENV=production`, → 422 `VALIDATION`). Response (always 200 for a processed request):
+
+```json
+{"ok": false, "provider": "openrouter", "embedding_dimension": 3072,
+ "checks": {"auth": {"ok": true, "latency_ms": 180},
+           "chat": {"ok": false, "code": "MODEL_NOT_FOUND", "message": "…", "latency_ms": 90},
+           "embedding": {"ok": false, "code": "EMBEDDING_DIMENSION_MISMATCH", "message": "This model produces 3072-dimensional vectors; StudyForge stores 1536-dimensional vectors. …", "latency_ms": 210, "dimension": 3072}}}
+```
+
+* **Order:** `auth` (authenticated call: OpenRouter `GET /key` + `GET /models`; OpenAI/Groq `GET /models`) → `chat` → `embedding`. If `auth` fails the other two are `{"ok": null, "skipped": true}` and **no paid call is made**. `chat` and `embedding` run independently of each other. `ok` is true only when all three are true.
+* **chat:** one non-streaming completion, `temperature=0`, `max_output_tokens=8` (sent as `max_tokens` for OpenRouter, `max_completion_tokens` for OpenAI/Groq), prompt `Reply with OK.`; any completed response counts (even empty text with a normal finish).
+* **embedding:** one `POST /embeddings` for `["StudyForge connection test"]` with `encoding_format=float` and `dimensions=1536` only where `catalogue.wants_dimensions_param` says so (OpenAI `text-embedding-3-*`, OpenRouter `openai/text-embedding-3-*`). `Provider.probe_embedding` returns the **measured** length of the single returned vector and requires exactly one non-empty vector of finite numbers (NaN/inf, base64 strings, extra/missing items ⇒ `PROVIDER_ERROR`). A length ≠ `EMBEDDING_DIMENSIONS` (1536) ⇒ `EMBEDDING_DIMENSION_MISMATCH` with the measured number in the message, `dimension` in the check and `embedding_dimension` at the top level. `embed()` (ingestion/retrieval) is unchanged and stays strict. Providers without embeddings (Groq) ⇒ `CAPABILITY_UNSUPPORTED` without any HTTP call.
+* **Timeouts/retries:** each check ≤ 20 s (`asyncio.timeout`), plus the adapters' existing bounded retries (≤ 2, only 429/5xx/timeouts). Redirects are never followed (the `Authorization` header cannot leave the provider host).
+* **Errors:** the normalised codes of §0 (`PROVIDER_AUTH_INVALID`, `PROVIDER_RATE_LIMITED`, `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `QUOTA_EXCEEDED` (402/credits), `CONTENT_FILTERED`, `PROVIDER_ERROR`) with fixed safe messages; upstream bodies, URLs and the key are never copied; secrets are bound for redaction for the whole call. Logs: one `validate_done` event with booleans/dimension only.
+* **Mock provider** (tests/dev only): key `mock-valid-key`; chat ids `mock-chat*` ok, other ids `MODEL_NOT_FOUND`; embedding `mock-embed` (1536), `mock-embed-3072` (dimension mismatch), `mock-embed-nan` (non-finite ⇒ `PROVIDER_ERROR`), other ids `MODEL_NOT_FOUND`.
+* **Ingest (§3):** the final `result` event carries `embedding_dimension` = the verified length of the vectors that were stored (null when nothing was embedded).

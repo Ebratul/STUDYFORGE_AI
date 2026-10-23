@@ -59,6 +59,7 @@ async def test_happy_path_txt(db):
     assert all(35 <= e["progress"] <= 90 for e in events if e.get("stage") == "embed") and prog[-1] == 95
     res = events[-1]
     assert res["status"] == "READY" and res["code"] is None and res["embedding_model"] == "mock-embed"
+    assert res["embedding_dimension"] == 1536  # the verified length of the vectors actually stored
     rows = await chunks_of(db, doc)
     assert res["chunk_count"] == len(rows) >= 1 and res["text_length"] > 0
     for r in rows:
@@ -199,7 +200,7 @@ async def test_expected_failures_store_nothing_and_keep_old_chunks(db, fname, da
     ev = await ingest(db, meta(doc, version=2, filename=fname), data)
     res = ev[-1]
     assert res["type"] == "result" and res["status"] == status and res["code"] == code and res["message"]
-    assert res["chunk_count"] == 0 and res["embedding_model"] is None
+    assert res["chunk_count"] == 0 and res["embedding_model"] is None and res["embedding_dimension"] is None
     assert await chunks_of(db, doc) == before and await doc_version(db, doc) == 1
     if code == "NEEDS_OCR":
         assert res["message"] == "This PDF looks scanned (no text layer). OCR is not configured on this server."

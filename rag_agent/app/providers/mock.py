@@ -499,6 +499,21 @@ class MockProvider:
             weaknesses.append({"topic": "Quantum Basket Weaving", "detail": "Needs work.", "evidence": "9 of 9 wrong"})
         return {"summary": summary, "strengths": strengths, "weaknesses": weaknesses, "next_steps": steps[:5], "caveats": [caveat]}
 
+    # ---------------------------------------------------------------- connection validation (tests/dev only)
+    def precheck_model(self, kind: str, model: str) -> None:
+        """Which model ids the mock 'knows': chat `mock-chat*`, embeddings `mock-embed*` (anything else MODEL_NOT_FOUND)."""
+        prefix = "mock-chat" if kind == "chat" else "mock-embed"
+        if not model.startswith(prefix):
+            raise ProviderError(ErrorCode.MODEL_NOT_FOUND)
+
+    async def probe_embedding(self, req: EmbedRequest) -> int:
+        self.calls.append("probe_embedding")
+        self._check_auth(req.api_key)
+        self.precheck_model("embedding", req.model)
+        if req.model == "mock-embed-nan":
+            raise ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected embedding response.", retryable=False)
+        return 3072 if req.model == "mock-embed-3072" else DIM
+
     # ---------------------------------------------------------------- embeddings
     async def embed(self, req: EmbedRequest) -> EmbedResult:
         self.calls.append("embed")
