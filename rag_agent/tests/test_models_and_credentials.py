@@ -222,7 +222,8 @@ async def test_providers_catalogue_endpoint(client):
     r = await client.get("/v1/providers")
     assert r.status_code == 200
     ps = {p["id"]: p for p in r.json()["providers"]}
-    assert set(ps) == {"openai", "openrouter", "groq", "mock"}
+    assert set(ps) == {"openai", "openrouter", "groq", "gemini", "mock"}
+    assert ps["gemini"]["capabilities"]["embeddings"] is True and ps["gemini"]["key_hint"] == "AIza..."
     assert ps["groq"]["capabilities"]["embeddings"] is False
     assert ps["openai"]["capabilities"]["structured_output"] == "model-dependent"
     assert ps["mock"]["name"] == "Mock (testing only)"

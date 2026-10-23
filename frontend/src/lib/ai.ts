@@ -1,7 +1,7 @@
 import { EN } from "@/lib/format-locale";
 import type { TFunction } from "@/lib/i18n/translate";
 
-export type ProviderId = "openai" | "openrouter" | "groq" | "mock";
+export type ProviderId = "openai" | "openrouter" | "groq" | "gemini" | "mock";
 export type CredentialStatus = "UNTESTED" | "VALID" | "INVALID" | "ERROR";
 export type TaskId = "CHAT" | "EMBEDDING" | "MCQ" | "CQ" | "ANALYSIS";
 

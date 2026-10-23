@@ -153,3 +153,8 @@ Supersedes nothing: D-022 (exact filtered search in PostgreSQL) remains the defa
 * **Direct REST over httpx, no SDK:** no new dependency, every call mockable; the cost is that response shapes come from the REST reference and are verified only by a fake until the opt-in live test is run.
 * **Schema:** `pineconeIndexedAt` plus `embeddingDimension` no longer generated (values preserved; a trigger keeps pre-migration code working). The `embedding` column and its data are untouched.
 
+### D-046 — Gemini as a fourth provider through the OpenAI-compatible endpoint · accepted
+* **Why through the compatibility layer:** every adapter shares one implementation (`OpenAICompatProvider`), so Gemini inherits the bounded retries, error normalisation, redaction and the measured-dimension validation without a second code path. The endpoint is fixed server-side (no user-supplied URL).
+* **Recognition:** a key starting with `AIza` (case-sensitive) maps to `GEMINI`; everything else is unchanged, and unknown keys still default to OpenRouter.
+* **Schema:** one additive enum value (`ALTER TYPE "AiProvider" ADD VALUE 'GEMINI'`, migration `20261028090000_gemini_provider`); nothing is rewritten, so application code from before the migration keeps working.
+* **Honesty about what is unverified:** the docs do not say whether `dimensions` is honoured on the compatibility endpoint, so it is only sent when the user asks for a size and the live validation measures the real length. Structured output is reported as `unknown` and the prompt-JSON path is used. Google's error bodies (a one-element JSON list; HTTP 400 for a bad key) are normalised in the shared error classifier.

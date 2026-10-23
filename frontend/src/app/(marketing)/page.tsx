@@ -9,7 +9,7 @@ const FEATURES = [
   { icon: PenLine, title: "CQ generation", text: "Stimulus-based creative questions, including a Bangla CQ preset, with or without model answers.", part: 3 },
   { icon: GraduationCap, title: "Timed exams", text: "Server-timed exams with autosave and deterministic scoring you can trust.", part: 4 },
   { icon: Users, title: "Study groups", text: "Invite classmates, share an identical exam, and compare results on a leaderboard.", part: 4 },
-  { icon: KeyRound, title: "Bring your own key", text: "Use OpenAI, OpenRouter or Groq with keys stored encrypted on the server.", part: 2 },
+  { icon: KeyRound, title: "Bring your own key", text: "Use OpenAI, OpenRouter, Groq or Gemini with keys stored encrypted on the server.", part: 2 },
 ];
 
 const STEPS = [

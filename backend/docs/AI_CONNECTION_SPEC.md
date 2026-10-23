@@ -7,7 +7,7 @@ Replaces the multi-provider / per-task settings UI with **one connection form of
 ## 0. Principles
 1. **No hard-coded models, no allow-list.** Model ids are free text (format-validated only). A model is "supported" only because the provider *actually answered* a minimal call with it.
 2. **Validate before activating.** A new/changed configuration is saved only if the provider accepts the key, the chat model and the embedding model (and the embedding has the dimension this installation can store). A failed attempt changes nothing: the previous working configuration stays active (single transaction, nothing written on failure).
-3. **Provider is derived, never typed.** Fixed server-side endpoints per provider (no user-supplied URLs → no SSRF). Derivation from the key: `sk-or-` → OpenRouter (**default for anything unrecognised**), `gsk_` → Groq (chat only → embedding check fails clearly), other `sk-` → OpenAI, `mock-…` → the test-only mock provider **only when `ALLOW_MOCK_PROVIDER` is enabled** (never in production; there is no silent fallback to mock). The form shows the detected provider read-only ("OpenRouter — detected from your key"); it is not an input.
+3. **Provider is derived, never typed.** Fixed server-side endpoints per provider (no user-supplied URLs → no SSRF). Derivation from the key: `sk-or-` → OpenRouter (**default for anything unrecognised**), `gsk_` → Groq (chat only → embedding check fails clearly), `AIza` → Gemini (Google AI Studio; case-sensitive), other `sk-` → OpenAI, `mock-…` → the test-only mock provider **only when `ALLOW_MOCK_PROVIDER` is enabled** (never in production; there is no silent fallback to mock). The form shows the detected provider read-only ("OpenRouter — detected from your key"); it is not an input.
 4. **Embedding identity = provider + model + dimension.** Equal dimension does not imply the same vector space. Documents are searchable only when their recorded identity equals the current configuration; otherwise they are *stale*, excluded with a clear message (never silently mixed), and can be re-embedded.
 5. Keys: server-side only, AES-256-GCM at rest (existing `ProviderCredential`), masked everywhere (`••••abcd`), never in responses/logs/errors/URLs/browser storage; empty key input never overwrites the saved key.
 
@@ -28,7 +28,7 @@ Request `{ provider, api_key (SecretStr), chat_model (1–200), embedding_model 
 ```ts
 { connection: {
     configured: boolean;                                   // key + chat + embedding all set
-    provider: "openrouter" | "openai" | "groq" | "mock" | null; providerLabel: string | null;
+    provider: "openrouter" | "openai" | "groq" | "gemini" | "mock" | null; providerLabel: string | null;
     apiKey: { configured: boolean; masked: string | null; status: "UNTESTED"|"VALID"|"INVALID"|"ERROR"|null };   // masked "••••abcd"
     chatModelId: string | null; embeddingModelId: string | null;
     embeddingDimension: number | null; /* + embeddingRequestDimensions, dimensionLimits, defaultEmbeddingDimension, reindex — see EMBEDDING_SETTINGS_SPEC §6 */ validatedAt: string | null;

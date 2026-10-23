@@ -296,6 +296,7 @@ export function previewProvider(key: string): { id: string; label: string } | nu
   if (!k) return null;
   if (k.startsWith("sk-or-")) return { id: "openrouter", label: "OpenRouter" };
   if (k.startsWith("gsk_")) return { id: "groq", label: "Groq" };
+  if (k.startsWith("AIza")) return { id: "gemini", label: "Gemini" };
   if (k.startsWith("sk-")) return { id: "openai", label: "OpenAI" };
   if (k.startsWith("mock-")) return { id: "mock", label: "Mock (testing only)" };
   return { id: "openrouter", label: "OpenRouter" };

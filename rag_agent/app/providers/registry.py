@@ -8,6 +8,7 @@ from app.config import Settings
 from app.errors import AppError, ErrorCode
 from app.providers import catalogue
 from app.providers.base import Provider
+from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.openai import OpenAIProvider
@@ -21,6 +22,7 @@ class ProviderRegistry:
             "openai": OpenAIProvider(settings),
             "openrouter": OpenRouterProvider(settings),
             "groq": GroqProvider(settings),
+            "gemini": GeminiProvider(settings),
         }
         if settings.mock_enabled:
             self._providers["mock"] = MockProvider(settings)
@@ -39,7 +41,7 @@ class ProviderRegistry:
         return list(self._providers)
 
     def catalogue(self) -> list[dict[str, Any]]:
-        metas = [catalogue.PROVIDERS[i] for i in ("openai", "openrouter", "groq")]
+        metas = [catalogue.PROVIDERS[i] for i in ("openai", "openrouter", "groq", "gemini")]
         if self.settings.mock_enabled:
             metas.append(catalogue.MOCK_META)
         return [

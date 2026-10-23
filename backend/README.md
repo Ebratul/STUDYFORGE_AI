@@ -73,7 +73,7 @@ Each service documents its own: [backend/.env.example](.env.example), `frontend/
 
 Test databases: `studyforge_test` (backend), `studyforge_rag_test` (rag_agent), `studyforge_e2e` (browser tests) — each name must end in `_test`/`_e2e`; the tools refuse other databases. S3 driver tests need `S3_TEST_ENDPOINT` (e.g. adobe/s3mock on :9090). Cloudinary tests are mocked; a live check is opt-in (see [docs/CLOUDINARY_STORAGE.md](docs/CLOUDINARY_STORAGE.md)).
 
-No test needs a paid provider call. Live OpenAI/OpenRouter/Groq behaviour is **untested** (no keys were available); see the status doc.
+No test needs a paid provider call. Live OpenAI/OpenRouter/Groq/Gemini behaviour is **untested** (no keys were available); see the status doc.
 
 ## Security notes
 See [docs/SECURITY.md](docs/SECURITY.md) and [docs/PROJECT_ARCHITECTURE.md §5](docs/PROJECT_ARCHITECTURE.md). Headlines: keys encrypted at rest (AES-256-GCM) and never returned; server-side authorization with ownership in every query; retrieval filtered in SQL; document-only answers verified in code; Markdown rendering sanitised with images disabled; CSP nonce, HttpOnly cookies, rate limits, redacted logs. The backend and rag_agent must not be exposed publicly. The application has **not** been independently audited.

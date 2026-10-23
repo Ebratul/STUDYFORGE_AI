@@ -24,7 +24,7 @@ export function ModelField({ configured, task, override, onOverride }: { configu
         <p className="flex flex-wrap items-center gap-2 text-sm">
           <Cpu className="size-4 text-muted-foreground" aria-hidden />
           <span>Model:</span>
-          <Badge variant="secondary" className="rounded-full font-mono text-xs" data-testid="model-badge">{effective.provider.toLowerCase()} · {effective.modelId}</Badge>
+          <Badge variant="secondary" className="h-auto min-w-0 max-w-full shrink justify-start whitespace-normal break-all rounded-full text-left font-mono text-xs" data-testid="model-badge">{effective.provider.toLowerCase()} · {effective.modelId}</Badge>
           {override?.modelId && <span className="text-xs text-muted-foreground">(this run only)</span>}
           <Link href="/settings/providers" className="text-xs text-primary underline">Change in settings</Link>
         </p>

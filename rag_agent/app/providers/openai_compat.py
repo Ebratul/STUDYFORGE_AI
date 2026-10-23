@@ -1,4 +1,4 @@
-"""Shared implementation for OpenAI-compatible providers (OpenAI, OpenRouter, Groq) on LangChain + httpx."""
+"""Shared implementation for OpenAI-compatible providers (OpenAI, OpenRouter, Groq, Gemini) on LangChain + httpx."""
 
 from __future__ import annotations
 

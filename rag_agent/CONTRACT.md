@@ -4,7 +4,7 @@
 `backend` calls it. The browser never talks to it. The backend is the system of record: it authenticates users, owns
 encrypted credentials, decides which documents a user may use, and persists conversations. `rag_agent`:
 
-1. **Provider layer** — OpenAI / OpenRouter / Groq (+ a test-only `mock`) adapters: test credentials, list models,
+1. **Provider layer** — OpenAI / OpenRouter / Groq / Gemini (+ a test-only `mock`) adapters: test credentials, list models,
    chat (stream and non-stream), structured output, embeddings, normalized errors, usage.
 2. **Ingestion** — extract text → chunk → embed → write `DocumentChunk` rows (pgvector).
 3. **Retrieval + grounded chat** — LangGraph workflows for the two conversation policies.
@@ -39,7 +39,7 @@ In streams the same object is sent as an `error` event.
 
 ## 1. Providers
 
-Provider ids (lowercase on the wire): `openai`, `openrouter`, `groq`, `mock`.
+Provider ids (lowercase on the wire): `openai`, `openrouter`, `groq`, `gemini`, `mock`.
 `mock` exists **only if** `ALLOW_MOCK_PROVIDER=1` **and** `APP_ENV != production` (otherwise treated as unknown → 422 `VALIDATION`).
 
 All three real providers are OpenAI-compatible HTTP APIs; implement them as adapters behind one interface (see §1.4) using

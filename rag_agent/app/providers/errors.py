@@ -26,6 +26,7 @@ _CONTEXT_RE = re.compile(
 )
 _FILTER_RE = re.compile(r"(content[_ ]filter|content[_ ]policy|content management|moderation|flagged|guardrail|safety system)", re.I)
 _MODEL_RE = re.compile(r"(model[_ ]not[_ ]found|not a valid model|invalid model|model .{0,80}(does not exist|not found|decommissioned|no longer supported)|no endpoints found)", re.I)
+_AUTH_RE = re.compile(r"(api[_ ]key not valid|api_key_invalid|invalid api key|incorrect api key)", re.I)  # Gemini answers a bad key with HTTP 400
 _QUOTA_RE = re.compile(r"(insufficient[_ ]quota|exceeded your current quota|billing|credits|payment required|out of budget|spend limit)", re.I)
 
 
@@ -96,6 +97,8 @@ def parse_retry_after(headers: Mapping[str, str] | None) -> int | None:
 
 def classify_http(status: int, body: Any = None, headers: Mapping[str, str] | None = None, *, where: str = "chat") -> ProviderError:
     """`where` is "chat"/"embed" (a 404 means the model is unknown) or "models" (a 404 is just an error)."""
+    if isinstance(body, list) and len(body) == 1:
+        body = body[0]  # Google sometimes wraps its error object in a one-element JSON list
     code_tokens, msg = _body_parts(body)
     probe = f"{code_tokens} {msg}"
     retry_after = parse_retry_after(headers)
@@ -122,6 +125,8 @@ def classify_http(status: int, body: Any = None, headers: Mapping[str, str] | No
             return err(ErrorCode.QUOTA_EXCEEDED)
         return err(ErrorCode.PROVIDER_RATE_LIMITED, ra=retry_after)
     if status in (400, 413, 422):
+        if status == 400 and _AUTH_RE.search(probe):
+            return err(ErrorCode.PROVIDER_AUTH_INVALID)
         if _CONTEXT_RE.search(probe) or status == 413:
             return err(ErrorCode.CONTEXT_TOO_LONG)
         if _FILTER_RE.search(probe):

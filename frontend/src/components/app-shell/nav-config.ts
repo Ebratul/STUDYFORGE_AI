@@ -48,7 +48,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/notifications", label: msg("Notifications"), icon: "Bell", status: "ready", keywords: "alerts inbox" },
       { href: "/settings/profile", label: msg("Profile"), icon: "UserRound", status: "ready", keywords: "name bio timezone" },
       { href: "/settings/privacy", label: msg("Privacy & account"), icon: "ShieldCheck", status: "ready", keywords: "password delete export sessions security" },
-      { href: "/settings/providers", label: msg("AI connection"), icon: "KeyRound", status: "ready", keywords: "api key model models openrouter openai groq embedding byok credentials providers" },
+      { href: "/settings/providers", label: msg("AI connection"), icon: "KeyRound", status: "ready", keywords: "api key model models openrouter openai groq gemini google embedding byok credentials providers" },
       { href: "/admin", label: msg("Admin"), icon: "ShieldAlert", status: "ready", adminOnly: true, keywords: "operations" },
     ],
   },

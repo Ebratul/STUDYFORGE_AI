@@ -10,7 +10,7 @@ The repository root contains exactly three folders (plus `.git`, `.github`, `.gi
 |---|---|---|
 | `frontend/` | Next.js 16 (App Router), React 19, Tailwind 4, shadcn/ui, TanStack Query | UI only. Calls the backend through a same-origin proxy. Holds **no** secrets and **no** database access. |
 | `backend/` | TypeScript, Hono on Node, Prisma 7 + PostgreSQL, Better Auth | System of record: authentication, authorization, BYOK credential encryption, conversations, documents, storage, job queue, usage quotas. Also holds the Prisma schema/migrations, local Docker infra and project docs. |
-| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector, optionally also Pinecone), retrieval, the two grounded-chat workflows, the bounded MCQ / CQ generation workflows (Part 3) and the post-exam analysis / study-plan workflows (Part 5). |
+| `rag_agent/` | Python 3.13, FastAPI, LangChain, LangGraph | Internal AI service: provider adapters (OpenAI / OpenRouter / Groq / Gemini), credential tests, model listing, document ingestion (extract → chunk → embed → pgvector, optionally also Pinecone), retrieval, the two grounded-chat workflows, the bounded MCQ / CQ generation workflows (Part 3) and the post-exam analysis / study-plan workflows (Part 5). |
 
 ```
 Browser ──► frontend (Next.js :3000)
@@ -25,7 +25,7 @@ Browser ──► frontend (Next.js :3000)
                                        rag_agent (FastAPI :8100) ──(only "Document"/"DocumentChunk")──┘
                                                 │
                                                 ▼
-                                  OpenAI / OpenRouter / Groq  (user's own API key)
+                                  OpenAI / OpenRouter / Groq / Gemini  (user's own API key)
 ```
 
 Why this split: the browser must never see the backend, the AI service or any provider key; the backend is the *only* place that decides who may touch which data; and the AI service is stateless with respect to users and secrets (keys arrive per request and are never stored or logged).

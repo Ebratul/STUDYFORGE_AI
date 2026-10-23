@@ -36,6 +36,19 @@ Groq
     the page, which are not pattern-matched here). `json_object` is listed for all models. -- console.groq.com/docs/structured-outputs
   * OpenAI-compat: `logprobs`, `logit_bias`, `top_logprobs`, `messages[].name` -> 400; `n` must be 1. -- console.groq.com/docs/openai
   * `stream_options.include_usage`: only third-party sources (LangChain Groq integration, Groq SDK docs) -- UNVERIFIED against Groq's own page.
+Gemini (Google AI Studio, through its OpenAI-compatibility layer; docs fetched 2026-10-23)
+  * Base URL https://generativelanguage.googleapis.com/v1beta/openai ; `Authorization: Bearer <key>` -- ai.google.dev/gemini-api/docs/openai
+  * Chat model ids are bare names (`gemini-...`); the docs do not mention a `models/` prefix.
+  * Embeddings: `POST /embeddings`; `gemini-embedding-001` (text) and `gemini-embedding-2` (multimodal) -- ai.google.dev/gemini-api/docs/embeddings.
+    Native size 3072; the NATIVE API shortens with `output_dimensionality` (128-3072, recommended 768/1536/3072). Whether the OpenAI-compatible
+    endpoint honours the OpenAI `dimensions` parameter is NOT documented (UNVERIFIED): this adapter therefore sends `dimensions` only when the
+    user asked for a size, and the connection validation measures the real vector length, so an ignored parameter is reported, never assumed.
+  * Structured outputs: the docs only show `beta.chat.completions.parse` examples, not strict `json_schema` rules (UNVERIFIED) -> capability
+    "unknown", so generation uses the prompt-JSON path (always works, with the bounded repair attempt).
+  * `GET /models` response shape is not described (UNVERIFIED). The parser accepts the OpenAI list shape and strips a leading `models/` from ids.
+  * `max_tokens` vs `max_completion_tokens` and error body shape are not documented (UNVERIFIED): `max_tokens` is sent; an error body that is a
+    one-element JSON list (a known Google quirk) is unwrapped before classification; HTTP 400 "API key not valid" is mapped to an auth error.
+  * `stream_options.include_usage` is used in the docs' own example (implied support); usage degrades to null if no usage chunk arrives.
 """
 
 from __future__ import annotations
@@ -103,6 +116,21 @@ PROVIDERS: dict[str, ProviderMeta] = {
         structured_output="model-dependent",
         embedding_dimensions_note="Groq does not offer an embeddings API; pick OpenAI or OpenRouter for document embeddings.",
     ),
+    "gemini": ProviderMeta(
+        id="gemini",
+        name="Gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        docs_url="https://ai.google.dev/gemini-api/docs/openai",
+        key_hint="AIza...",
+        chat=True,
+        embeddings=True,
+        structured_output="model-dependent",
+        embedding_dimensions_note=(
+            "Gemini embedding models answer with 3072 numbers by default. Leave the dimension automatic to use that size, or enter a smaller size "
+            "(Google recommends 768, 1536 or 3072); it is checked with a live request, because the OpenAI-compatible endpoint's support for a "
+            "smaller size is not documented."
+        ),
+    ),
 }
 
 MOCK_META = ProviderMeta(
@@ -135,6 +163,11 @@ OPENAI_NO_SAMPLING_PARAMS = re.compile(r"^(o\d|gpt-5)")
 
 GROQ_NON_CHAT = re.compile(r"(whisper|orpheus|tts|playai|prompt-guard|guard|distil-whisper)", re.I)
 GROQ_STRUCTURED_YES = re.compile(r"^openai/gpt-oss-(20b|120b)$")
+
+# Gemini's model list mixes text, embedding, image, video, speech and live-audio models; only text generators belong in the chat list.
+GEMINI_EMBEDDING = re.compile(r"embedding", re.I)
+GEMINI_NON_CHAT = re.compile(r"(embedding|imagen|veo|tts|image|audio|live|aqa|robotics|computer-use|deep-research|lyria)", re.I)
+GEMINI_CHAT_PREFIX = re.compile(r"^(gemini|gemma)", re.I)
 
 
 def openai_no_sampling(model_id: str) -> bool:
@@ -206,6 +239,41 @@ def parse_groq_models(payload: dict) -> list[ModelInfo]:
                 context_length=ctx if isinstance(ctx, int) else None,
                 capabilities=_caps(chat=True, embeddings=False, structured="yes" if yes else "unknown", tools="unknown"),
                 capability_source="catalogue" if yes else "unverified",
+            )
+        )
+    return out
+
+
+def parse_gemini_models(payload: dict) -> list[ModelInfo]:
+    """OpenAI-style list from Gemini's compatibility endpoint. Ids may arrive as `models/<id>`; the prefix is dropped."""
+    out: list[ModelInfo] = []
+    for m in payload.get("data") or []:
+        raw = m.get("id") if isinstance(m, dict) else None
+        if not isinstance(raw, str):
+            continue
+        mid = raw.removeprefix("models/")
+        if not mid:
+            continue
+        if GEMINI_EMBEDDING.search(mid):
+            out.append(
+                ModelInfo(
+                    id=mid,
+                    name=mid,
+                    context_length=None,
+                    capabilities=_caps(chat=False, embeddings=True, structured="no", tools="no"),
+                    capability_source="catalogue",
+                )
+            )
+            continue
+        if not GEMINI_CHAT_PREFIX.match(mid) or GEMINI_NON_CHAT.search(mid):
+            continue
+        out.append(
+            ModelInfo(
+                id=mid,
+                name=mid,
+                context_length=None,  # not reported by the compatibility endpoint
+                capabilities=_caps(chat=True, embeddings=False, structured="unknown", tools="unknown"),
+                capability_source="unverified",
             )
         )
     return out

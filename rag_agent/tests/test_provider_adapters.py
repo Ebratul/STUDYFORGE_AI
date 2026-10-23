@@ -13,13 +13,14 @@ from pydantic import SecretStr
 
 from app.errors import ErrorCode, ProviderError
 from app.providers import retry as retry_mod
+from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.openai import OpenAIProvider
 from app.providers.openrouter import OpenRouterProvider
 from tests.helpers import BASES, CANARY_KEY, chat_json, err_body, req, sse_response
 
 KEY = SecretStr(CANARY_KEY)
-PROVIDERS = {"openai": OpenAIProvider, "openrouter": OpenRouterProvider, "groq": GroqProvider}
+PROVIDERS = {"openai": OpenAIProvider, "openrouter": OpenRouterProvider, "groq": GroqProvider, "gemini": GeminiProvider}
 
 
 @pytest.fixture(params=list(PROVIDERS))
@@ -43,8 +44,8 @@ async def test_generate_success_and_usage(prov):
     assert sent.url.host == httpx.URL(BASES[prov.id]).host
     body = json.loads(sent.content)
     assert body["temperature"] == 0.3 and body["top_p"] == 0.9
-    # OpenRouter documents max_tokens; OpenAI/Groq use max_completion_tokens
-    assert body.get("max_tokens" if prov.id == "openrouter" else "max_completion_tokens") == 77
+    # OpenRouter documents max_tokens (Gemini is sent the same legacy name); OpenAI/Groq use max_completion_tokens
+    assert body.get("max_tokens" if prov.id in ("openrouter", "gemini") else "max_completion_tokens") == 77
 
 
 async def test_usage_is_null_when_provider_does_not_report_it(prov):

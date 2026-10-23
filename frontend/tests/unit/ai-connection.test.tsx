@@ -59,6 +59,8 @@ describe("provider preview (display only)", () => {
   it("guesses from the key prefix and defaults to OpenRouter", () => {
     expect(previewProvider("sk-or-v1-abc")?.label).toBe("OpenRouter");
     expect(previewProvider("gsk_abc")?.label).toBe("Groq");
+    expect(previewProvider("AIzaSyExample0123456789")).toEqual({ id: "gemini", label: "Gemini" });
+    expect(previewProvider("aizaLowercase")?.label).toBe("OpenRouter"); // case matters: Google keys start with "AIza"
     expect(previewProvider("sk-proj-abc")?.label).toBe("OpenAI");
     expect(previewProvider("whatever-key")?.label).toBe("OpenRouter");
     expect(previewProvider("   ")).toBeNull();

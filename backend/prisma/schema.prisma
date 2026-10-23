@@ -229,6 +229,7 @@ enum AiProvider {
   OPENAI
   OPENROUTER
   GROQ
+  GEMINI
   // Deterministic test provider; only offered when ALLOW_MOCK_PROVIDER=1 and never in production.
   MOCK
 }

@@ -2,7 +2,7 @@
 
 Internal AI service (Python 3.13, FastAPI, LangChain, LangGraph). Only the StudyForge `backend` calls it; browsers never do.
 The backend authenticates users, owns encrypted credentials, decides which documents a user may use and persists conversations.
-`rag_agent` provides: provider adapters (OpenAI / OpenRouter / Groq + a test-only `mock`), document ingestion into pgvector,
+`rag_agent` provides: provider adapters (OpenAI / OpenRouter / Groq / Gemini + a test-only `mock`), document ingestion into pgvector,
 owner-scoped hybrid retrieval, and LangGraph workflows for the two conversation policies. The normative spec is `CONTRACT.md`.
 
 ## Setup, run, test
@@ -63,7 +63,7 @@ app/config.py          pydantic-settings; app/security.py bearer check (constant
 app/redact.py          central redaction (bound request secrets + key patterns); app/logging.py JSON logs
 app/errors.py          codes, HTTP mapping, safe messages
 app/providers/         base (types/Protocol), openai_compat (LangChain ChatOpenAI/OpenAIEmbeddings + httpx),
-                       openai / openrouter / groq / mock, catalogue (facts + capability rules), errors (normalisation), retry, registry
+                       openai / openrouter / groq / gemini / mock, catalogue (facts + capability rules), errors (normalisation), retry, registry
 app/ingest/            extract (pure parsers), worker+sandbox (isolated subprocess), chunk, pipeline (embed + atomic store)
 app/retrieval/search.py  ONE parameterised hybrid SQL (vector + ts_rank, RRF k=60), owner/doc/version/READY/model scoped
 app/graphs/            state, document_only (LangGraph), general (LangGraph), runner (SSE events, cancellation)
