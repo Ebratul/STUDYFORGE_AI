@@ -14,7 +14,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
  */
 export const AREAS = [
   { name: "App shell & common", complete: true, prefixes: ["src/components/app-shell/", "src/components/brand/", "src/components/common/", "src/app/layout.tsx", "src/app/error.tsx", "src/app/not-found.tsx", "src/app/global-error.tsx", "src/lib/i18n/"] },
-  { name: "Auth", complete: true, prefixes: ["src/components/auth/", "src/app/(auth)/", "src/app/verify-email/", "src/app/(marketing)/layout.tsx"] },
+  { name: "Auth", complete: true, prefixes: ["src/components/auth/", "src/lib/google-auth.ts", "src/app/(auth)/", "src/app/verify-email/", "src/app/(marketing)/layout.tsx"] },
   { name: "Dashboard", complete: true, prefixes: ["src/components/dashboard/", "src/app/(app)/(main)/dashboard/", "src/lib/analytics.ts"] },
   { name: "Exams & taking an exam", complete: true, prefixes: ["src/components/exams/", "src/lib/exams.ts", "src/lib/exams-api.ts", "src/app/(app)/(main)/exams/", "src/app/(app)/(main)/attempts/", "src/app/(exam)/"] },
   { name: "Results, AI feedback & study plan", complete: true, prefixes: ["src/lib/bands.ts", "src/lib/analysis.ts", "src/components/analysis/", "src/components/study-plan/"] },

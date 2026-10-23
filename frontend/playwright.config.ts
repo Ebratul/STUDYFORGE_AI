@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { defineConfig, devices } from "@playwright/test";
-import { backendDir, e2eDatabaseUrl, E2E_SECRETS, E2E_STORAGE_DIR, PORTS, ragDir } from "./tests/helpers/test-env";
+import { backendDir, e2eDatabaseUrl, E2E_GOOGLE, E2E_SECRETS, E2E_STORAGE_DIR, PORTS, ragDir } from "./tests/helpers/test-env";
 
 const dbUrl = e2eDatabaseUrl();
 
@@ -48,6 +48,7 @@ export default defineConfig({
         RAG_AGENT_URL: `http://127.0.0.1:${PORTS.rag}`,
         RAG_AGENT_TOKEN: E2E_SECRETS.RAG_AGENT_TOKEN,
         ALLOW_MOCK_PROVIDER: "true",
+        ...E2E_GOOGLE,
         SMTP_URL: smtp,
         EMAIL_FROM: "StudyForge <no-reply@studyforge.test>",
         STORAGE_DRIVER: "local",

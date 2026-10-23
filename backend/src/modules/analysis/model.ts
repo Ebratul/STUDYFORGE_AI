@@ -4,10 +4,10 @@ import { getEnv } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 import { AppError } from "../../lib/errors.js";
 import { getDecryptedKey } from "../ai/credentials.js";
-import { resolveModel } from "../ai/preferences.js";
+import { resolveModel, toWireParams, type GenerationParams } from "../ai/preferences.js";
 import { toWire } from "../ai/providers.js";
 
-export type AnalysisModel = { provider: AiProvider; modelId: string; key: string; credentialId: string; params: { temperature: number | null; topP: number | null; maxTokens: number | null } };
+export type AnalysisModel = { provider: AiProvider; modelId: string; key: string; credentialId: string; params: GenerationParams };
 
 /** The ANALYSIS task preference, falling back to the user's default model. Throws NOT_CONFIGURED when there is none (or no key for it). */
 export async function resolveAnalysisModel(userId: string): Promise<AnalysisModel> {
@@ -26,7 +26,7 @@ export async function hasAnalysisModel(userId: string): Promise<boolean> {
 
 export function chatBlock(m: AnalysisModel): AnalyzeChat {
   const cap = getEnv().ANALYSIS_MAX_OUTPUT_TOKENS;
-  return { provider: toWire(m.provider), api_key: m.key, model: m.modelId, params: { temperature: m.params.temperature, top_p: m.params.topP, max_output_tokens: Math.min(m.params.maxTokens ?? cap, cap) } };
+  return { provider: toWire(m.provider), api_key: m.key, model: m.modelId, params: toWireParams(m.params, cap) };
 }
 
 /** Provider/service failures that are worth another attempt (the job is re-run with backoff). */

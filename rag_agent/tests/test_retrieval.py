@@ -14,22 +14,23 @@ from app.retrieval.search import search_chunks
 from tests.conftest import add_doc
 
 MODEL = "mock-embed"
+PROVIDER = "mock"
 
 
-async def put(pool, doc, owner, idx, content, *, version=1, model=MODEL, page=None, section=None, vec_text=None):
+async def put(pool, doc, owner, idx, content, *, version=1, model=MODEL, provider=PROVIDER, page=None, section=None, vec_text=None, dim=1536):
     async with pool.connection() as conn:
         await conn.execute(
-            'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","page","section","content","tokenCount","embeddingModel","embedding") '
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (uuid.uuid4().hex, doc, owner, idx, version, page, section, content, 1, model, Vector(hash_embed(vec_text or content))),
+            'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","page","section","content","tokenCount","embeddingProvider","embeddingModel","embedding") '
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (uuid.uuid4().hex, doc, owner, idx, version, page, section, content, 1, provider, model, Vector(hash_embed(vec_text or content, dim))),
         )
 
 
-async def find(pool, owner, docs, query, *, model=MODEL, top_k=6, max_ctx=None, text=None):
+async def find(pool, owner, docs, query, *, model=MODEL, provider=PROVIDER, dim=1536, top_k=6, max_ctx=None, text=None):
     async with pool.connection() as conn:
-        return await search_chunks(conn, owner_id=owner, document_ids=docs, query_embedding=hash_embed(query),
-                                   query_text=text if text is not None else query, embedding_model=model, top_k=top_k,
-                                   min_similarity=0.3, max_context_chars=max_ctx)
+        return await search_chunks(conn, owner_id=owner, document_ids=docs, query_embedding=hash_embed(query, dim),
+                                   query_text=text if text is not None else query, embedding_provider=provider, embedding_model=model,
+                                   embedding_dimension=dim, top_k=top_k, min_similarity=0.3, max_context_chars=max_ctx)
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ async def test_empty_document_ids_do_not_query(db, corpus):
             raise AssertionError("must not query")
 
     out = await search_chunks(Boom(), owner_id="alice", document_ids=[], query_embedding=hash_embed("x"), query_text="x",
-                              embedding_model=MODEL, top_k=3, min_similarity=0.3)
+                              embedding_provider=PROVIDER, embedding_model=MODEL, embedding_dimension=1536, top_k=3, min_similarity=0.3)
     assert out == []
 
 
@@ -171,7 +172,7 @@ async def test_wrong_dimension_query_vector(db, corpus):
     async with db.connection() as conn:
         with pytest.raises(AppError) as ei:
             await search_chunks(conn, owner_id="alice", document_ids=[a], query_embedding=[0.1] * 10, query_text="x",
-                                embedding_model=MODEL, top_k=3, min_similarity=0.3)
+                                embedding_provider=PROVIDER, embedding_model=MODEL, embedding_dimension=1536, top_k=3, min_similarity=0.3)
     assert ei.value.code == ErrorCode.EMBEDDING_DIMENSION_MISMATCH
 
 
@@ -180,13 +181,15 @@ async def test_missing_owner_is_rejected(db, corpus):
     async with db.connection() as conn:
         with pytest.raises(AppError):
             await search_chunks(conn, owner_id="", document_ids=[a], query_embedding=hash_embed("x"), query_text="x",
-                                embedding_model=MODEL, top_k=3, min_similarity=0.3)
+                                embedding_provider=PROVIDER, embedding_model=MODEL, embedding_dimension=1536, top_k=3, min_similarity=0.3)
 
 
 def test_sql_is_parameterised_and_always_owner_scoped():
     sql = S.SQL
     for needle in ('c."ownerId" = %(owner)s', 'd."ownerId" = %(owner)s', 'c."documentId" = ANY(%(doc_ids)s)',
-                   'c."processingVersion" = d."processingVersion"', "d.\"status\" = 'READY'", 'c."embeddingModel" = %(embedding_model)s'):
+                   'c."processingVersion" = d."processingVersion"', "d.\"status\" = 'READY'", 'c."embeddingModel" = %(embedding_model)s',
+                   'c."embeddingProvider" = %(embedding_provider)s', 'c."embeddingDimension" = %(dim)s', 'vector_dims(c."embedding") = %(dim)s',
+                   "base AS MATERIALIZED"):
         assert needle in sql
     assert "{" not in sql and "f'" not in sql
     assert "USING hnsw" not in sql.lower() and "ivfflat" not in sql.lower()

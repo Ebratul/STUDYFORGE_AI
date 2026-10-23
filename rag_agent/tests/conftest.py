@@ -101,13 +101,15 @@ async def add_user(conn, uid: str) -> None:
     )
 
 
-async def add_doc(pool, owner: str, doc_id: str | None = None, *, name: str = "notes.txt", status: str = "READY", version: int = 0) -> str:
+async def add_doc(pool, owner: str, doc_id: str | None = None, *, name: str = "notes.txt", status: str = "READY", version: int = 0,
+                  provider: str | None = "MOCK", model: str | None = "mock-embed", dimension: int | None = 1536) -> str:
+    """A document row with its ACTIVE embedding identity recorded (what the backend writes when a document becomes READY)."""
     doc_id = doc_id or uuid.uuid4().hex
     async with pool.connection() as conn:
         await add_user(conn, owner)
         await conn.execute(
-            'INSERT INTO "Document" ("id","ownerId","name","extension","mimeType","sizeBytes","sha256","storageKey","status","processingVersion","updatedAt") '
-            "VALUES (%s,%s,%s,%s,%s,1,%s,%s,%s::\"DocumentStatus\",%s,now())",
-            (doc_id, owner, name, name.rsplit(".", 1)[-1], "text/plain", uuid.uuid4().hex, "k/" + doc_id, status, version),
+            'INSERT INTO "Document" ("id","ownerId","name","extension","mimeType","sizeBytes","sha256","storageKey","status","processingVersion","embeddingProvider","embeddingModel","embeddingDimension","updatedAt") '
+            "VALUES (%s,%s,%s,%s,%s,1,%s,%s,%s::\"DocumentStatus\",%s,%s::\"AiProvider\",%s,%s,now())",
+            (doc_id, owner, name, name.rsplit(".", 1)[-1], "text/plain", uuid.uuid4().hex, "k/" + doc_id, status, version, provider, model, dimension),
         )
     return doc_id

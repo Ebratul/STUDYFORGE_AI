@@ -11,18 +11,18 @@ from tests.conftest import CANARY_KEY, make_settings
 from pgvector import Vector
 
 
-async def put_chunk(pool, doc, owner, idx, content, *, version=1, model="mock-embed", page=None, section=None):
+async def put_chunk(pool, doc, owner, idx, content, *, version=1, provider="mock", model="mock-embed", page=None, section=None):
     async with pool.connection() as conn:
         await conn.execute(
-            'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","page","section","content","tokenCount","embeddingModel","embedding") '
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (uuid.uuid4().hex, doc, owner, idx, version, page, section, content, 1, model, Vector(hash_embed(content))),
+            'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","page","section","content","tokenCount","embeddingProvider","embeddingModel","embedding") '
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (uuid.uuid4().hex, doc, owner, idx, version, page, section, content, 1, provider, model, Vector(hash_embed(content))),
         )
 
 
 def body(mode="DOCUMENT_ONLY", *, question="What do mitochondria produce?", user="alice", docs=(), history=(), use_documents=True,
          embedding: dict | None | str = "default", chat_provider="fake", retrieval=None, key=CANARY_KEY) -> ChatBody:
-    emb = {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed"} if embedding == "default" else embedding
+    emb = {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed", "dimension": 1536} if embedding == "default" else embedding
     return ChatBody.model_validate({
         "request_id": uuid.uuid4().hex, "user_id": user, "mode": mode,
         "chat": {"provider": chat_provider, "api_key": key, "model": "m", "params": {"temperature": 0.2}},

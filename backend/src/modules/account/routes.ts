@@ -11,6 +11,7 @@ import { getProfileBundle, updatePreferences, updateProfile } from "./profile.js
 import { listSessions, revokeOtherSessions, revokeSession } from "./sessions.js";
 import { preferencesSchema, profileSchema } from "./schemas.js";
 import { z } from "zod";
+import { isGoogleConfigured } from "../../config/env.js";
 import { getDailyUsage } from "../ai/usage.js";
 
 export const accountRoutes = new Hono<AppEnv>();
@@ -23,9 +24,20 @@ accountRoutes.get("/me", async (c) => {
   const user = c.get("user");
   const [unread, { preference }, createdAt] = await Promise.all([countUnread(user), getProfileBundle(user), db.user.findUnique({ where: { id: user.id }, select: { createdAt: true } })]);
   return c.json({
-    user: { id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified, role: user.role, createdAt: createdAt?.createdAt.toISOString() ?? null },
+    user: { id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified, image: user.image, role: user.role, createdAt: createdAt?.createdAt.toISOString() ?? null },
     unread,
     preference: { theme: preference?.theme ?? "SYSTEM", locale: preference?.locale ?? "en", autoAiFeedback: preference?.autoAiFeedback ?? true },
+  });
+});
+
+// How this account can sign in. Never returns provider account ids, tokens or password hashes.
+accountRoutes.get("/account/sign-in-methods", async (c) => {
+  const user = c.get("user");
+  const accounts = await db.account.findMany({ where: { userId: user.id }, select: { id: true, providerId: true, createdAt: true }, orderBy: { createdAt: "asc" } });
+  return c.json({
+    hasPassword: accounts.some((a) => a.providerId === "credential"),
+    googleAvailable: isGoogleConfigured(),
+    providers: accounts.filter((a) => a.providerId !== "credential").map((a) => ({ id: a.id, provider: a.providerId, linkedAt: a.createdAt.toISOString() })),
   });
 });
 

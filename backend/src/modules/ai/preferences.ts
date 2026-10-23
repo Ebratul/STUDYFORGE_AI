@@ -1,16 +1,71 @@
 import { z } from "zod";
 import type { AiProvider, AiTask } from "../../generated/prisma/client.js";
 import type { RagAgentClient } from "../../clients/rag-agent.js";
+import { Prisma } from "../../generated/prisma/client.js";
 import { db } from "../../lib/db.js";
 import { AppError } from "../../lib/errors.js";
 import { recordAudit } from "../../lib/audit.js";
 import type { SessionUser } from "../../auth/types.js";
-import { enabledProviders, toWire } from "./providers.js";
+import { enabledProviders } from "./providers.js";
 
 export const TASKS = ["CHAT", "EMBEDDING", "MCQ", "CQ", "ANALYSIS"] as const;
 
 /** Generation limits enforced for every request, regardless of what a model could technically accept. */
-export const LIMITS = { temperature: { min: 0, max: 2 }, topP: { min: 0, max: 1 }, maxTokens: { min: 1, max: 32_768 } } as const;
+export const LIMITS = {
+  temperature: { min: 0, max: 2 },
+  topP: { min: 0, max: 1 },
+  maxTokens: { min: 1, max: 32_768 },
+  frequencyPenalty: { min: -2, max: 2 },
+  presencePenalty: { min: -2, max: 2 },
+  seed: { min: 0, max: 2_147_483_647 },
+} as const;
+
+const opt = (min: number, max: number, int = false) => {
+  const n = int ? z.number().int() : z.number();
+  return n.min(min).max(max).nullable().optional();
+};
+
+/** The user-editable generation parameters. `null` clears a parameter (provider default); every value is range-checked on the server. */
+export const generationParamsInput = z.strictObject({
+  temperature: opt(LIMITS.temperature.min, LIMITS.temperature.max),
+  topP: opt(LIMITS.topP.min, LIMITS.topP.max),
+  maxTokens: opt(LIMITS.maxTokens.min, LIMITS.maxTokens.max, true),
+  frequencyPenalty: opt(LIMITS.frequencyPenalty.min, LIMITS.frequencyPenalty.max),
+  presencePenalty: opt(LIMITS.presencePenalty.min, LIMITS.presencePenalty.max),
+  seed: opt(LIMITS.seed.min, LIMITS.seed.max, true),
+});
+export type GenerationParamsInput = z.infer<typeof generationParamsInput>;
+
+export type GenerationParams = { temperature: number | null; topP: number | null; maxTokens: number | null; frequencyPenalty: number | null; presencePenalty: number | null; seed: number | null };
+export const NO_PARAMS: GenerationParams = { temperature: null, topP: null, maxTokens: null, frequencyPenalty: null, presencePenalty: null, seed: null };
+
+const extraParamsSchema = z.object({ frequencyPenalty: z.number().min(-2).max(2).nullable().optional(), presencePenalty: z.number().min(-2).max(2).nullable().optional(), seed: z.number().int().min(0).max(LIMITS.seed.max).nullable().optional() });
+
+/** Reads a stored row defensively: a corrupt/out-of-range JSON value is treated as "not set", never forwarded to a provider. */
+export function paramsFromRow(row: { temperature: number | null; topP: number | null; maxTokens: number | null; extraParams?: unknown }): GenerationParams {
+  const extra = extraParamsSchema.safeParse(row.extraParams ?? {});
+  const e = extra.success ? extra.data : {};
+  return { temperature: row.temperature, topP: row.topP, maxTokens: row.maxTokens, frequencyPenalty: e.frequencyPenalty ?? null, presencePenalty: e.presencePenalty ?? null, seed: e.seed ?? null };
+}
+
+/** Column values for a full parameter set (used by the connection form). */
+export function paramsToColumns(p: GenerationParams) {
+  const extra = { ...(p.frequencyPenalty !== null ? { frequencyPenalty: p.frequencyPenalty } : {}), ...(p.presencePenalty !== null ? { presencePenalty: p.presencePenalty } : {}), ...(p.seed !== null ? { seed: p.seed } : {}) };
+  return { temperature: p.temperature, topP: p.topP, maxTokens: p.maxTokens, extraParams: Object.keys(extra).length ? extra : Prisma.DbNull };
+}
+
+/** rag_agent wire form. Only parameters the user actually set are included, so nothing unsupported is ever sent by default. */
+export function toWireParams(p: GenerationParams, maxTokensCap?: number) {
+  const out: Record<string, number> = {};
+  if (p.temperature !== null) out.temperature = p.temperature;
+  if (p.topP !== null) out.top_p = p.topP;
+  const max = p.maxTokens !== null ? (maxTokensCap ? Math.min(p.maxTokens, maxTokensCap) : p.maxTokens) : maxTokensCap;
+  if (max !== undefined) out.max_output_tokens = max;
+  if (p.frequencyPenalty !== null) out.frequency_penalty = p.frequencyPenalty;
+  if (p.presencePenalty !== null) out.presence_penalty = p.presencePenalty;
+  if (p.seed !== null) out.seed = p.seed;
+  return out;
+}
 
 /** Free-text model id: format only — there is deliberately no allow-list (AI_CONNECTION_SPEC §0.1). */
 export const modelIdSchema = z
@@ -48,12 +103,11 @@ export async function getPreferences(user: SessionUser): Promise<PreferencesView
   return view;
 }
 
-export async function setPreferences(rag: RagAgentClient, user: SessionUser, input: PreferencesInputType): Promise<PreferencesView> {
+export async function setPreferences(_rag: RagAgentClient, user: SessionUser, input: PreferencesInputType): Promise<PreferencesView> {
   const changes: [AiTask, z.infer<typeof entry> | null][] = [];
   if (input.default !== undefined) changes.push(["DEFAULT", input.default]);
   for (const [task, value] of Object.entries(input.tasks ?? {})) if (value !== undefined) changes.push([task as AiTask, value]);
 
-  let catalog: Awaited<ReturnType<RagAgentClient["providers"]>> | undefined;
   const creds = new Map((await db.providerCredential.findMany({ where: { userId: user.id }, select: { id: true, provider: true } })).map((c) => [c.provider, c.id]));
 
   const ops = [];
@@ -62,22 +116,16 @@ export async function setPreferences(rag: RagAgentClient, user: SessionUser, inp
       ops.push(db.modelPreference.deleteMany({ where: { userId: user.id, task } }));
       continue;
     }
+    if (task === "EMBEDDING") {
+      // The embedding model and its dimension are one verified unit (EMBEDDING_SETTINGS_SPEC §3/§5): changing either here would skip the
+      // live check and the staged re-index and leave a stale dimension behind. Only removal is allowed on this endpoint.
+      throw new AppError("VALIDATION", "Change the embedding model in Settings → AI connection, where it is verified and your documents are re-indexed safely.", { fields: { "EMBEDDING.modelId": "Use Settings → AI connection to change the embedding model." } });
+    }
     const provider = value.provider.toUpperCase() as AiProvider;
     if (!(enabledProviders() as string[]).includes(provider)) throw new AppError("VALIDATION", "Unknown provider.", { fields: { [`${task}.provider`]: "Choose a supported provider." } });
     const credentialId = creds.get(provider);
     if (!credentialId) throw new AppError("VALIDATION", `Add your ${provider.toLowerCase()} API key first.`, { fields: { [`${task}.provider`]: "No API key saved for this provider." } });
-    if (task === "EMBEDDING") {
-      catalog ??= await rag.providers();
-      const p = catalog.find((c) => c.id === toWire(provider));
-      if (!p?.capabilities.embeddings) throw new AppError("VALIDATION", "That provider doesn't offer embeddings.", { fields: { "EMBEDDING.provider": "Choose a provider that supports embeddings." } });
-    }
-    const data = {
-      credentialId,
-      modelId: value.modelId,
-      temperature: task === "EMBEDDING" ? null : (value.temperature ?? null),
-      topP: task === "EMBEDDING" ? null : (value.topP ?? null),
-      maxTokens: task === "EMBEDDING" ? null : (value.maxTokens ?? null),
-    };
+    const data = { credentialId, modelId: value.modelId, temperature: value.temperature ?? null, topP: value.topP ?? null, maxTokens: value.maxTokens ?? null };
     ops.push(db.modelPreference.upsert({ where: { userId_task: { userId: user.id, task } }, create: { userId: user.id, task, ...data }, update: data }));
   }
   await db.$transaction(ops);
@@ -91,7 +139,9 @@ export type ResolvedModel = {
   credentialId: string;
   /** EMBEDDING only: the vector length measured when the configuration was validated (null for older rows). */
   embeddingDimension: number | null;
-  params: { temperature: number | null; topP: number | null; maxTokens: number | null };
+  /** EMBEDDING only: the verified `dimensions` request parameter (null = native size, nothing is sent). */
+  embeddingRequestDimensions: number | null;
+  params: GenerationParams;
 };
 
 /** Task preference, falling back to the user's default for generation tasks. Embeddings never fall back to the chat default. */
@@ -105,6 +155,7 @@ export async function resolveModel(userId: string, task: (typeof TASKS)[number])
     modelId: row.modelId,
     credentialId: row.credentialId,
     embeddingDimension: row.embeddingDimension,
-    params: { temperature: row.temperature, topP: row.topP, maxTokens: row.maxTokens },
+    embeddingRequestDimensions: row.embeddingRequestDimensions,
+    params: paramsFromRow(row),
   };
 }

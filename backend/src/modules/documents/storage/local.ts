@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-import { KEY_PATTERN, type Storage } from "./types.js";
+import { KEY_PATTERN, probeWritable, randomKey, type Storage } from "./types.js";
 
 /** Private on-disk store for development/self-hosting. Files are never served statically. */
 export class LocalStorage implements Storage {
@@ -15,6 +15,14 @@ export class LocalStorage implements Storage {
     const full = resolve(this.root, key);
     if (!full.startsWith(this.root + sep)) throw new Error("invalid storage key");
     return full;
+  }
+
+  newKey(userId: string) {
+    return randomKey("u", userId);
+  }
+
+  async ping() {
+    await probeWritable(this);
   }
 
   async put(key: string, data: Uint8Array) {

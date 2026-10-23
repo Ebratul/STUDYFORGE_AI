@@ -14,7 +14,7 @@ export async function AppShell({
   themePreference,
   children,
 }: {
-  user: { name: string; email: string; role: "USER" | "SUPPORT" | "ADMIN" };
+  user: { name: string; email: string; image?: string | null; role: "USER" | "SUPPORT" | "ADMIN" };
   unread: number;
   themePreference: "SYSTEM" | "LIGHT" | "DARK";
   children: React.ReactNode;
@@ -30,7 +30,7 @@ export async function AppShell({
           <div className="flex h-16 items-center px-5"><Logo href="/workspace" /></div>
           <div className="px-3 pb-3"><CommandSearch items={items} registerShortcut /></div>
           <div className="flex-1 overflow-y-auto px-3 pb-3"><SidebarNav sections={sections} /></div>
-          <div className="border-t p-3"><UserMenu name={user.name} email={user.email} /></div>
+          <div className="border-t p-3"><UserMenu name={user.name} email={user.email} image={user.image} /></div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar sections={sections} user={user} unread={unread} />

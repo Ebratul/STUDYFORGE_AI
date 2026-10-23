@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { z } from "zod";
 import type { AiProvider, Prisma } from "../../generated/prisma/client.js";
-import { RagAgentError, type GenerateEvent, type GenerateRequest, type GenerateResult, type RagAnswer, type RagQuestion, type RagSource, type RagAgentClient } from "../../clients/rag-agent.js";
+import { RagAgentError, type EmbeddingCredentials, type GenerateEvent, type GenerateRequest, type GenerateResult, type RagAnswer, type RagQuestion, type RagSource, type RagAgentClient } from "../../clients/rag-agent.js";
 import type { SessionUser } from "../../auth/types.js";
 import { getEnv } from "../../config/env.js";
 import { parseWith } from "../../http/body.js";
@@ -13,8 +13,8 @@ import { recordAudit } from "../../lib/audit.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
 import { getModels } from "../ai/models.js";
-import { EXPECTED_DIMENSION, guidanceFor, isCompatible, STALE_DOCUMENTS_MESSAGE } from "../ai/embedding-identity.js";
-import { resolveModel } from "../ai/preferences.js";
+import { embeddingCredentials, guidanceFor, identityOf, isCompatible, STALE_DOCUMENTS_MESSAGE } from "../ai/embedding-identity.js";
+import { NO_PARAMS, resolveModel, toWireParams, type GenerationParams } from "../ai/preferences.js";
 import { fromWire, toWire } from "../ai/providers.js";
 import { assertWithinQuota, recordUsage } from "../ai/usage.js";
 import { buildContent } from "./content.js";
@@ -67,8 +67,8 @@ type Ctx = {
   modelId: string;
   key: string;
   credentialId: string;
-  params: { temperature: number | null; topP: number | null; maxTokens: number | null };
-  embedding: { provider: AiProvider; model: string; key: string } | null;
+  params: GenerationParams;
+  embedding: EmbeddingCredentials | null;
   contextTokens: number | null;
   docs: { id: string; name: string }[];
 };
@@ -79,7 +79,7 @@ async function resolveContext(rag: RagAgentClient, user: SessionUser, kind: RunK
   // Model: an explicit per-run choice, else the task preference, else the default. Never another provider.
   let provider: AiProvider;
   let modelId: string;
-  let params = { temperature: null as number | null, topP: null as number | null, maxTokens: null as number | null };
+  let params: GenerationParams = NO_PARAMS;
   if (fixed) ({ provider, modelId } = fixed);
   else if (settings.model) {
     provider = fromWire(settings.model.provider);
@@ -111,9 +111,9 @@ async function resolveContext(rag: RagAgentClient, user: SessionUser, kind: RunK
       // Topic + documents = retrieval, which needs the embedding model the documents were indexed with.
       const emb = await resolveModel(user.id, "EMBEDDING");
       if (!emb) throw new AppError("NOT_CONFIGURED", "Choose an embedding model in Settings → AI connection to find the topic in your documents, or clear the topic to cover the whole document.");
-      const identity = { provider: emb.provider, model: emb.modelId, dimension: emb.embeddingDimension ?? EXPECTED_DIMENSION };
+      const identity = identityOf(emb);
       if (rows.some((r) => !isCompatible(r, identity))) fields.documentIds = STALE_DOCUMENTS_MESSAGE;
-      else embedding = { provider: emb.provider, model: emb.modelId, key: (await getDecryptedKey(user.id, emb.provider)).key };
+      else embedding = embeddingCredentials(emb, (await getDecryptedKey(user.id, emb.provider)).key);
     }
   }
   if (Object.keys(fields).length) throw new AppError("VALIDATION", "Some sources can't be used.", { fields });
@@ -149,9 +149,9 @@ function buildRequest(ctx: Ctx, userId: string, over?: { count?: number; difficu
     user_id: userId,
     chat: {
       provider: toWire(ctx.provider), api_key: ctx.key, model: ctx.modelId,
-      params: { temperature: ctx.params.temperature, top_p: ctx.params.topP, max_output_tokens: Math.min(ctx.params.maxTokens ?? cap, cap) },
+      params: toWireParams(ctx.params, cap),
     },
-    embedding: ctx.embedding ? { provider: toWire(ctx.embedding.provider), api_key: ctx.embedding.key, model: ctx.embedding.model } : null,
+    embedding: ctx.embedding,
     context_tokens: ctx.contextTokens,
     grounding: s.grounding,
     sources: { topic: s.topic ?? null, pasted_text: s.pastedText ?? null, document_ids: ctx.docs.map((d) => d.id) },

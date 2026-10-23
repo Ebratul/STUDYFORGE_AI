@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Document, DocumentStatus, Prisma } from "../../generated/prisma/client.js";
 import { db } from "../../lib/db.js";
 import { AppError, Errors } from "../../lib/errors.js";
@@ -9,8 +9,9 @@ import { getEnv } from "../../config/env.js";
 import type { SessionUser } from "../../auth/types.js";
 import { currentEmbeddingIdentity, isStale, sameIdentity, docIdentity, type EmbeddingIdentity } from "../ai/embedding-identity.js";
 import { enqueue } from "../jobs/queue.js";
+import { queueDeleteDocumentVectors } from "../vectors/store.js";
 import { getLimits } from "./limits.js";
-import type { Storage } from "./storage/types.js";
+import { StorageError, type Storage } from "./storage/types.js";
 import { validateUpload } from "./validation.js";
 
 export type DocumentView = {
@@ -101,13 +102,22 @@ export async function uploadDocuments(storage: Storage, user: SessionUser, files
       results.push(await uploadOne(storage, user, file));
     } catch (err) {
       if (err instanceof AppError) results.push({ filename: file.name, ok: false, error: { code: err.code, message: err.message } });
-      else {
+      else if (err instanceof StorageError) {
+        const e = storageFailure(err);
+        results.push({ filename: file.name, ok: false, error: { code: e.code, message: e.message } });
+      } else {
         logger.error("document.upload_failed", { err });
         results.push({ filename: file.name, ok: false, error: { code: "INTERNAL", message: "That file could not be saved. Please try again." } });
       }
     }
   }
   return results;
+}
+
+/** Storage backend failures as user-facing errors (StorageError messages are already sanitized). */
+function storageFailure(err: StorageError): AppError {
+  if (err.code === "FILE_TOO_LARGE") return new AppError("VALIDATION", "This file is larger than the file storage plan allows. Try a smaller file or contact the administrator.");
+  return new AppError("STORAGE_UNAVAILABLE", err.message, { retryable: err.retryable });
 }
 
 async function uploadOne(storage: Storage, user: SessionUser, file: UploadFile): Promise<UploadResult> {
@@ -127,8 +137,14 @@ async function uploadOne(storage: Storage, user: SessionUser, file: UploadFile):
     });
   }
 
-  const storageKey = `u/${user.id}/${randomBytes(16).toString("hex")}`;
-  await storage.put(storageKey, file.bytes, v.mimeType);
+  const storageKey = storage.newKey(user.id);
+  try {
+    await storage.put(storageKey, file.bytes, v.mimeType);
+  } catch (err) {
+    // A timeout can happen after the provider stored the object; the delete is idempotent, so queue it rather than risk an orphan.
+    if (err instanceof StorageError && err.code === "UNAVAILABLE") await db.job.create({ data: { type: "delete-object", payload: { key: storageKey }, maxAttempts: 6 } }).catch(() => undefined);
+    throw err;
+  }
   try {
     const doc = await db.$transaction(async (tx) => {
       const created = await tx.document.create({
@@ -140,7 +156,8 @@ async function uploadOne(storage: Storage, user: SessionUser, file: UploadFile):
     await recordAudit({ actorId: user.id, action: "document.uploaded", targetType: "document", targetId: doc.id, metadata: { ext: v.ext, bytes: file.bytes.byteLength } });
     return { filename: file.name, ok: true, document: toView(doc) };
   } catch (err) {
-    await storage.delete(storageKey).catch(() => undefined);
+    // The row was never created, so nothing references this object: remove it now, or hand it to the retrying cleanup job.
+    await storage.delete(storageKey).catch(() => db.job.create({ data: { type: "delete-object", payload: { key: storageKey }, maxAttempts: 6 } }).catch(() => undefined));
     if ((err as { code?: string }).code === "P2002") {
       // Lost a race with an identical concurrent upload: return the winner.
       const winner = await db.document.findUnique({ where: { ownerId_sha256: { ownerId: user.id, sha256 } } });
@@ -200,6 +217,8 @@ export async function deleteDocument(storage: Storage, user: SessionUser, id: st
     // Citations keep their snapshot text but stop pointing at a document that no longer exists.
     await tx.messageCitation.updateMany({ where: { documentId: doc.id }, data: { documentId: null, chunkId: null } });
     await enqueue(tx, { type: "delete-object", payload: { key: doc.storageKey }, maxAttempts: 6 });
+    // Vectors held outside PostgreSQL (dual / pinecone) have nothing to cascade: queue their removal in the same transaction.
+    await queueDeleteDocumentVectors(tx, user.id, doc.id);
   });
   await recordAudit({ actorId: user.id, action: "document.deleted", targetType: "document", targetId: doc.id });
 }

@@ -32,6 +32,7 @@
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "better-auth": "1.7.12",
+    "cloudinary": "^2.11.0",
     "fontkit": "^2.0.4",
     "hono": "^4.13.13",
     "nodemailer": "^10.1.7",

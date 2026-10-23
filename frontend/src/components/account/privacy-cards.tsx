@@ -133,7 +133,7 @@ export function ExportCard() {
   );
 }
 
-export function DeleteAccountCard({ email }: { email: string }) {
+export function DeleteAccountCard({ email, hasPassword = true }: { email: string; hasPassword?: boolean }) {
   const t = useT();
   const rich = useRich();
   const router = useRouter();
@@ -142,15 +142,18 @@ export function DeleteAccountCard({ email }: { email: string }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const ready = confirmEmail.trim().toLowerCase() === email.toLowerCase() && password.length > 0;
+  const ready = confirmEmail.trim().toLowerCase() === email.toLowerCase() && (!hasPassword || password.length > 0);
 
   async function onDelete() {
     setBusy(true);
     setError(null);
-    const { error: err } = await authClient.deleteUser({ password });
+    // Accounts without a password (Google only) are confirmed by a recent sign-in instead.
+    const { error: err } = await authClient.deleteUser(hasPassword ? { password } : {});
     setBusy(false);
     if (err) {
-      setError(err.status === 429 ? t("Too many attempts. Please wait a minute.") : t("We couldn't delete the account. Check your password and try again."));
+      if (err.status === 429) setError(t("Too many attempts. Please wait a minute."));
+      else if (!hasPassword) setError(t("For your security, sign out, sign in again with Google, and then delete your account."));
+      else setError(t("We couldn't delete the account. Check your password and try again."));
       return;
     }
     router.replace("/?deleted=1");
@@ -169,14 +172,18 @@ export function DeleteAccountCard({ email }: { email: string }) {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t("Delete your account?")}</DialogTitle>
-              <DialogDescription>{t("This is permanent. Type your email address and enter your password to confirm.")}</DialogDescription>
+              <DialogDescription>{hasPassword ? t("This is permanent. Type your email address and enter your password to confirm.") : t("This is permanent. Type your email address to confirm. You must have signed in recently.")}</DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="confirm-email">{rich("Type {email}", { email: <span className="font-mono">{email}</span> })}</Label>
                 <Input id="confirm-email" value={confirmEmail} onChange={(e) => setConfirmEmail(e.target.value)} autoComplete="off" className="h-10 rounded-xl" />
               </div>
-              <FormField label={t("Password")} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" error={error ?? undefined} />
+              {hasPassword ? (
+                <FormField label={t("Password")} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" error={error ?? undefined} />
+              ) : (
+                error && <p role="alert" className="text-sm text-destructive">{error}</p>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" className="rounded-xl" onClick={() => setOpen(false)}>{t("Cancel")}</Button>

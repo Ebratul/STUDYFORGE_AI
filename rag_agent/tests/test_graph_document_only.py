@@ -271,7 +271,7 @@ async def test_embedding_provider_failure_returns_its_error_without_llm_call(db,
     a, _ = world
     emb = FakeProvider("openai", embed_error=AppError(ErrorCode.PROVIDER_AUTH_INVALID))
     fake = FakeProvider(structured_script=[grounded("x [1]", "y")])
-    ev = await run(db, fake, doc_body(a, embedding={"provider": "openai", "api_key": CANARY_KEY, "model": "text-embedding-3-small"}),
+    ev = await run(db, fake, doc_body(a, embedding={"provider": "openai", "api_key": CANARY_KEY, "model": "text-embedding-3-small", "dimension": 1536}),
                    registry_extra=[emb])
     assert fake.llm_calls == 0 and get(ev, "error")[0]["code"] == "PROVIDER_AUTH_INVALID"
     assert "final" not in names(ev) and CANARY_KEY not in json.dumps(ev)

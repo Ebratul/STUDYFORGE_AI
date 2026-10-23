@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronsUpDown, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ export function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]!.toUpperCase()).join("") || "?";
 }
 
-export function UserMenu({ name, email, variant = "card" }: { name: string; email: string; variant?: "card" | "compact" }) {
+export function UserMenu({ name, email, image, variant = "card" }: { name: string; email: string; image?: string | null; variant?: "card" | "compact" }) {
   const router = useRouter();
   const t = useT();
   const [pending, setPending] = useState(false);
@@ -41,6 +41,7 @@ export function UserMenu({ name, email, variant = "card" }: { name: string; emai
         )}
       >
         <Avatar className="size-9">
+          {image && <AvatarImage src={image} alt="" referrerPolicy="no-referrer" />}
           <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">{initials(name)}</AvatarFallback>
         </Avatar>
         {variant === "card" && (

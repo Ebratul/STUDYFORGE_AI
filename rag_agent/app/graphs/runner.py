@@ -22,7 +22,7 @@ from app.tracing import build_callbacks
 log = logging.getLogger("rag.chat")
 
 
-def make_context(settings: Settings, registry: ProviderRegistry, pool: Any, body: ChatBody) -> ChatContext:
+def make_context(settings: Settings, registry: ProviderRegistry, pool: Any, body: ChatBody, vectors: Any = None) -> ChatContext:
     chat_provider = registry.get(body.chat.provider)
     embed_provider = registry.get(body.embedding.provider) if body.embedding else None
     r = body.retrieval
@@ -40,6 +40,7 @@ def make_context(settings: Settings, registry: ProviderRegistry, pool: Any, body
         min_similarity=(r.min_similarity if r and r.min_similarity is not None else settings.retrieval_min_similarity),
         max_context_chars=(r.max_context_chars if r and r.max_context_chars else settings.retrieval_max_context_chars),
         secrets=secrets,
+        vectors=vectors,
     )
 
 
@@ -75,14 +76,14 @@ async def run_chat(ctx: ChatContext) -> AsyncIterator[tuple[str, dict[str, Any]]
             yield "error", AppError(ErrorCode.INTERNAL).to_dict()
 
 
-def make_gen_context(settings: Settings, registry: ProviderRegistry, pool: Any, body: McqGenBody | CqGenBody, kind: str) -> GenContext:
+def make_gen_context(settings: Settings, registry: ProviderRegistry, pool: Any, body: McqGenBody | CqGenBody, kind: str, vectors: Any = None) -> GenContext:
     chat_provider = registry.get(body.chat.provider)  # unknown provider -> 422 before streaming
     embed_provider = registry.get(body.embedding.provider) if body.embedding else None
     secrets = [body.chat.api_key.get_secret_value()]
     if body.embedding:
         secrets.append(body.embedding.api_key.get_secret_value())
     return GenContext(settings=settings, registry=registry, pool=pool, body=body, kind=kind, chat_provider=chat_provider,
-                      embed_provider=embed_provider, secrets=secrets)
+                      embed_provider=embed_provider, secrets=secrets, vectors=vectors)
 
 
 async def run_generation(ctx: GenContext) -> AsyncIterator[tuple[str, dict[str, Any]]]:

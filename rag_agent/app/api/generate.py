@@ -26,7 +26,7 @@ def sse(event: str, data: dict) -> bytes:
 def _stream(request: Request, body: McqGenBody | CqGenBody, kind: str) -> StreamingResponse:
     app = request.app
     request_id_var.set(body.request_id[:64])
-    ctx = make_gen_context(app.state.settings, app.state.registry, app.state.pool, body, kind)
+    ctx = make_gen_context(app.state.settings, app.state.registry, app.state.pool, body, kind, app.state.vectors)
 
     async def gen() -> AsyncIterator[bytes]:
         request_id_var.set(body.request_id[:64])

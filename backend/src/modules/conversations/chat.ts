@@ -10,8 +10,8 @@ import { recordProviderEvent } from "../../lib/metrics.js";
 import { enforceRateLimit } from "../../lib/rate-limit.js";
 import type { SessionUser } from "../../auth/types.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
-import { documentIdentitySelect, EXPECTED_DIMENSION, guidanceFor, isCompatible, STALE_DOCUMENTS_MESSAGE, STALE_SOME_DOCUMENTS_WARNING } from "../ai/embedding-identity.js";
-import { resolveModel } from "../ai/preferences.js";
+import { documentIdentitySelect, embeddingCredentials, guidanceFor, identityOf, isCompatible, STALE_DOCUMENTS_MESSAGE, STALE_SOME_DOCUMENTS_WARNING } from "../ai/embedding-identity.js";
+import { resolveModel, toWireParams } from "../ai/preferences.js";
 import { toWire } from "../ai/providers.js";
 import { assertWithinQuota, recordUsage } from "../ai/usage.js";
 import { DEFAULT_TITLE, ownedConversation, toMessageView, type MessageView } from "./service.js";
@@ -91,7 +91,7 @@ export async function prepareChat(
       warnings.push("Your documents were not used because no embedding model is configured.");
     } else {
       // Same provider + model + dimension as the vectors in the index: never mix embedding spaces (AI_CONNECTION_SPEC §3).
-      const identity = { provider: embedding.provider, model: embedding.modelId, dimension: embedding.embeddingDimension ?? EXPECTED_DIMENSION };
+      const identity = identityOf(embedding);
       const matching = ready.filter((d) => isCompatible(d, identity));
       if (matching.length === 0) {
         if (conv.mode === "DOCUMENT_ONLY") throw new AppError("CONFLICT", STALE_DOCUMENTS_MESSAGE, { reason: "EMBEDDING_STALE" });
@@ -99,7 +99,7 @@ export async function prepareChat(
       } else {
         if (matching.length < ready.length) warnings.push(STALE_SOME_DOCUMENTS_WARNING);
         const key = await getDecryptedKey(user.id, embedding.provider);
-        embeddingCreds = { provider: toWire(embedding.provider), api_key: key.key, model: embedding.modelId };
+        embeddingCreds = embeddingCredentials(embedding, key.key);
         documentIds = matching.map((d) => d.id);
       }
     }
@@ -154,7 +154,7 @@ export async function prepareChat(
       provider: toWire(chatModel.provider),
       api_key: chatKey.key,
       model: chatModel.modelId,
-      params: { temperature: chatModel.params.temperature, top_p: chatModel.params.topP, max_output_tokens: chatModel.params.maxTokens },
+      params: toWireParams(chatModel.params),
     },
     embedding: embeddingCreds,
     messages,

@@ -7,7 +7,9 @@ import { AppError } from "../../lib/errors.js";
 import { requireAuth } from "../../http/middleware.js";
 import type { AppEnv } from "../../http/context.js";
 import { readJson } from "../../http/body.js";
-import { connectionInput, getConnection, saveConnection } from "./connection.js";
+import { connectionInput, getConnection, saveConnection, testConnection } from "./connection.js";
+import { publicModelsQuery, searchPublicModels } from "./public-models.js";
+import { cancelEmbeddingReindex, retryEmbeddingReindex } from "./reindex.js";
 import { apiKeySchema, deleteCredential, listCredentials, saveCredential, testCandidate, testStored } from "./credentials.js";
 import { getModels } from "./models.js";
 import { getPreferences, LIMITS, preferencesInput, setPreferences, TASKS } from "./preferences.js";
@@ -93,6 +95,33 @@ export function aiRoutes(rag: RagAgentClient) {
 
   r.put("/connection", async (c) => c.json(await saveConnection(rag, c.get("user"), await readJson(c.req.raw, connectionInput))));
 
+  // "Test configuration": the same checks as saving, explicitly requested, nothing written. May make tiny provider requests (free for :free models).
+  r.post("/connection/test", async (c) => c.json(await testConnection(rag, c.get("user"), await readJson(c.req.raw, connectionInput))));
+
+  // Staged embedding re-index (EMBEDDING_SETTINGS_SPEC §5): the old index keeps serving; these only end or restart the build.
+  r.post("/embedding-reindex/cancel", async (c) => {
+    const user = c.get("user");
+    await enforceRateLimit({ key: `embedding-reindex:${user.id}`, limit: 10, windowSec: 60 });
+    await cancelEmbeddingReindex(user.id);
+    return c.json({ connection: await getConnection(user) });
+  });
+
+  r.post("/embedding-reindex/retry", async (c) => {
+    const user = c.get("user");
+    await enforceRateLimit({ key: `embedding-reindex:${user.id}`, limit: 10, windowSec: 60 });
+    await retryEmbeddingReindex(user.id);
+    return c.json({ connection: await getConnection(user) });
+  });
+
+  // Optional suggestions from the provider's PUBLIC model list (no key used). Typing any model id stays possible.
+  r.get("/public-models", async (c) => {
+    const user = c.get("user");
+    await enforceRateLimit({ key: `public-models:${user.id}`, limit: 30, windowSec: 60 });
+    const parsed = publicModelsQuery.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
+    if (!parsed.success) throw new AppError("VALIDATION", "Invalid query.", { fields: Object.fromEntries(parsed.error.issues.map((i) => [String(i.path[0] ?? "query"), i.message])) });
+    return c.json(await searchPublicModels(rag, parsed.data));
+  });
+
   r.get("/preferences", async (c) => c.json(await getPreferences(c.get("user"))));
 
   r.put("/preferences", async (c) => {
@@ -100,7 +129,9 @@ export function aiRoutes(rag: RagAgentClient) {
     await enforceRateLimit({ key: `ai-prefs:${user.id}`, limit: 30, windowSec: 60 });
     const input = await readJson(c.req.raw, preferencesInput);
     try {
-      return c.json(await setPreferences(rag, user, input));
+      const view = await setPreferences(rag, user, input);
+      if (input.tasks?.EMBEDDING === null) await cancelEmbeddingReindex(user.id); // nothing left to switch to
+      return c.json(view);
     } catch (err) {
       return mapRagError(err);
     }

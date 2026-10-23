@@ -13,6 +13,16 @@ Legend: ✅ implemented & verified · 🟡 implemented, partly verified · ⛔ p
 ### Part 1 (carried over; re-verified after the backend/frontend split)
 Accounts, recovery, verification, sessions, RBAC/admin, profile/preferences, notifications, privacy (password change, sessions, export, deletion), security headers/CSP, rate limiting, audit, design system, responsive shell — ✅ (same E2E coverage as before, now through the proxy + Hono backend).
 
+### Post-Part-5 change — optional Pinecone vector store (`VECTOR_STORE=pgvector|dual|pinecone`)
+Contract and runbook: [VECTOR_STORE_SPEC.md](VECTOR_STORE_SPEC.md), decision D-045. Default `pgvector` is unchanged.
+| Capability | Status | Evidence |
+|---|---|---|
+| `VectorStore` abstraction (pgvector, Pinecone, in-memory fake), deterministic chunk ids, config validation | ✅ | rag_agent tests: contract suite across fake / Pinecone-over-fake-REST (per-user + shared) / real PostgreSQL |
+| Ingest, re-index, retrieval, dual-mode comparison, deletion jobs, connection check | ✅ | rag_agent + backend tests (partial failure, cancellation, idempotent retry, hostile/stale/orphan Pinecone results, mode regression) |
+| Backfill (dry-run first, resumable) and orphan reconcile tools; read-only index check | ✅ | tests with fakes; **not run against any real index** |
+| Migration `20261027090000_pinecone_vector_store` | ✅ written and tested on throwaway databases | **Not applied to `studyforge_dev` or any persistent database** |
+| Real Pinecone behaviour | ❌ **unverified** | Opt-in `tests/test_pinecone_live.py` exists; never run |
+
 ### Post-Part-5 change — manual AI connection (three-field form)
 Contract: [AI_CONNECTION_SPEC.md](AI_CONNECTION_SPEC.md). **Settings → AI connection** now has exactly three text inputs (API key, chat model id, embedding model id) backed by the existing credential/preference tables; provider is derived from the key (OpenRouter by default), no model allow-list, no provider/base-URL/dimension fields.
 
@@ -20,7 +30,7 @@ Contract: [AI_CONNECTION_SPEC.md](AI_CONNECTION_SPEC.md). **Settings → AI conn
 |---|---|---|
 | Server-side validation before activation (auth → chat → embedding, minimal paid calls, finite-vector and dimension checks); failed attempts change nothing | ✅ | rag_agent `POST /v1/providers/validate` (44 tests, respx-mocked OpenRouter) + backend `PUT /api/ai/connection` (26 tests with FakeRag). **Never run against real OpenRouter** (no key); behaviour checked against its public docs on 2026-10-24 only. |
 | Key handling (AES-256-GCM, masked, blank input keeps the saved key, never in responses/logs/audit/browser storage) | ✅ | Key-scan tests (responses, logs, audit, account export) and an E2E DOM/storage scan. |
-| Embedding identity (provider + model + measured dimension) recorded per document; stale documents excluded with a clear message; re-embed workflow; old chunks kept until the new version commits | ✅ | New columns (additive migration, backfilled with 1536); `modules/ai/embedding-identity.ts` used by chat, generation, listing, re-embed. Only 1536-dimensional embedding models are supported. |
+| Embedding identity (provider + model + measured dimension) recorded per document; stale documents excluded with a clear message; re-embed workflow; old chunks kept until the new version commits | ✅ | New columns (additive migration, backfilled with 1536); `modules/ai/embedding-identity.ts` used by chat, generation, listing, re-embed. Superseded for sizes by the configurable-dimension work: any measured size 8–4096, staged re-index (EMBEDDING_SETTINGS_SPEC, migration `20261026090000_embedding_dimensions`). |
 | Chat/MCQ/CQ/analysis reuse the configured chat model; mock provider never used unless explicitly enabled outside production | ✅ | Four mock touchpoints listed in the B4 report (all gated by `ALLOW_MOCK_PROVIDER`; production start-up refuses it). |
 | UI: three inputs, per-check results, re-embed banner, Documents badge, English + Bangla | ✅ | E2E `ai-connection.spec` (13) incl. axe (the toast library is excluded from that scan: it was sampled mid-animation). |
 
@@ -104,7 +114,7 @@ Contract: [PART3_SPEC.md](PART3_SPEC.md). Schema: [DATABASE.md](DATABASE.md).
 | Usage tracking & quotas | ✅ | Daily request/token caps, per-endpoint rate limits. Token usage is recorded only when the provider reports it. Embedding usage is **not** recorded. Cost estimation is **not implemented**. |
 | LangGraph workflows | ✅ | `rag_agent/app/graphs` (document-only, general); typed state, bounded loops, timeouts. |
 | LangSmith (optional) | 🟡 | Config + content-hiding hooks unit-tested with a fake client; **no live LangSmith run**. Off by default. |
-| Storage drivers | 🟡 | `local` ✅ (tests + E2E). `s3`: integration-tested only against **adobe/s3mock** (an S3 API mock), not Cloudflare R2/MinIO/AWS. |
+| Storage drivers | 🟡 | `local` ✅ (tests + E2E). `s3`: integration-tested only against **adobe/s3mock** (an S3 API mock), not Cloudflare R2/MinIO/AWS. `cloudinary` (private raw/authenticated objects, key-prefix routing so existing local documents keep working): integration-tested against a mocked SDK only; live behaviour unverified (see CLOUDINARY_STORAGE.md). |
 | Account deletion removes stored files | ✅ | Files are queued for deletion before the rows cascade (integration-tested). |
 | AI result analysis and personalized recommendations | ⛔ | Part 5. |
 
@@ -159,7 +169,7 @@ Backend: `DATABASE_URL`, `APP_URL`, `BETTER_AUTH_SECRET`, `CREDENTIAL_ENCRYPTION
 * **No live provider was ever called.** OpenAI/OpenRouter/Groq behaviour (auth errors, rate limits, streaming usage, structured output, model-list shapes) is verified against documentation (dated 2026-10-22 in `rag_agent/app/providers/catalogue.py`) and mocked HTTP only. Items the rag_agent author flagged as **not re-verified**: `text-embedding-ada-002` dimensions (from memory), newer OpenAI model families' structured-output support (pattern is an inference), Groq `include_usage` (third-party sources only; usage degrades to `null`).
 * Retrieval quality with real embeddings (threshold `RETRIEVAL_MIN_SIMILARITY=0.30` was tuned only for the mock embedder) is unmeasured; it is configurable.
 * Follow-up questions are retrieved together with the previous user turn (deterministic condensation, no extra model call). An unrelated question asked right after a related one may therefore still be searched with the earlier topic; the verifier still requires every claim to be supported by a verbatim quote.
-* Only text-based PDFs (no OCR), no video; embeddings must be 1536-dimensional (OpenAI `text-embedding-3-*` via the `dimensions` parameter, `ada-002`); Groq cannot be the embedding provider; one embedding model at a time (changing it requires reprocessing documents).
+* Only text-based PDFs (no OCR), no video; embedding size is configurable (8–4096, verified with the provider; see EMBEDDING_SETTINGS_SPEC §8); Groq cannot be the embedding provider; one embedding model at a time (changing it re-indexes in the background while the old index keeps serving).
 * Parser isolation is process + rlimit + timeout (not seccomp). The DB role for `rag_agent` is *not* restricted in this repo; the contract documents the minimal grants and they were not tested.
 * Document-only answers are not token-streamed (verified before display) — by design.
 * The backend and rag_agent must not be exposed publicly; the backend trusts `X-Forwarded-For` from the frontend proxy.

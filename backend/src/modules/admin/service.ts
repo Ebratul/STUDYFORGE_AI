@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { Prisma, type Role, type UserStatus } from "../../generated/prisma/client.js";
 import type { RagAgentClient } from "../../clients/rag-agent.js";
 import type { SessionUser } from "../../auth/types.js";
@@ -276,12 +275,7 @@ export async function health(deps: { rag: RagAgentClient; storage: Storage }) {
     () => ({ ok: false, latencyMs: null }),
   );
   const ragOk = await deps.rag.ready().catch(() => false);
-  const writable = await (async () => {
-    const key = `u/_health/${randomBytes(16).toString("hex")}`;
-    await deps.storage.put(key, new Uint8Array([1]), "application/octet-stream");
-    await deps.storage.delete(key);
-    return true;
-  })().catch(() => false);
+  const writable = await deps.storage.ping().then(() => true, () => false);
   const [beat, queue] = database.ok
     ? await Promise.all([
         db.serviceHeartbeat.findUnique({ where: { name: "worker" } }),
@@ -305,7 +299,7 @@ export async function health(deps: { rag: RagAgentClient; storage: Storage }) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------------------------------------------------
-const META_ALLOW = new Set(["via", "reason", "from", "to", "status", "role", "count", "format", "kind", "created", "tasks", "slot", "runId", "provider", "keyChanged", "embeddingChanged"]);
+const META_ALLOW = new Set(["via", "reason", "from", "to", "status", "role", "count", "format", "kind", "created", "tasks", "slot", "runId", "provider", "keyChanged", "embeddingChanged", "dimension"]);
 
 function safeMetadata(meta: unknown): Record<string, string | number | boolean> | null {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;

@@ -46,7 +46,7 @@ export async function backendJson<T>(path: string): Promise<T> {
 }
 
 export type Me = {
-  user: { id: string; name: string; email: string; emailVerified: boolean; role: "USER" | "SUPPORT" | "ADMIN"; createdAt: string };
+  user: { id: string; name: string; email: string; emailVerified: boolean; image: string | null; role: "USER" | "SUPPORT" | "ADMIN"; createdAt: string };
   unread: number;
   preference: { theme: "SYSTEM" | "LIGHT" | "DARK"; locale: string };
 };
@@ -60,6 +60,18 @@ export const getMe = cache(async (): Promise<Me | null> => {
     return (await res.json()) as Me;
   } catch {
     return null;
+  }
+});
+
+/** Which optional sign-in providers the backend has configured. Fails closed (no buttons) if the backend is unreachable. */
+export const getAuthProviders = cache(async (): Promise<{ google: boolean }> => {
+  try {
+    const res = await backendFetch("/api/auth-providers");
+    if (!res.ok) return { google: false };
+    const body = (await res.json()) as { google?: unknown };
+    return { google: body.google === true };
+  } catch {
+    return { google: false };
   }
 });
 

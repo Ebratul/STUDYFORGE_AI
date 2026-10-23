@@ -23,6 +23,7 @@ from app.providers.base import ChatMessage, EmbedRequest, Provider
 from app.providers.registry import ProviderRegistry
 from app.retrieval.search import RetrievedChunk, search_chunks
 from app.schemas import ChatBody
+from app.vectorstore import VectorRuntime
 
 log = logging.getLogger("rag.chat")
 
@@ -59,6 +60,7 @@ class ChatContext:
     secrets: list[str] = field(default_factory=list)
     closed: bool = False  # set when the consumer went away: nodes must not start/continue
     live_tasks: set = field(default_factory=set)  # node tasks, cancelled explicitly on close (see tracked)
+    vectors: VectorRuntime | None = None  # None = pgvector mode
 
     async def shutdown(self) -> None:
         """Cancel every in-flight node (and thereby its provider HTTP call). Does not rely on LangGraph's own cancellation,
@@ -110,7 +112,8 @@ async def retrieve_chunks(ctx: ChatContext, query_text: str) -> list[RetrievedCh
     if ctx.pool is None:
         raise AppError(ErrorCode.INTERNAL, "Database is not available.")
     emb = await ctx.embed_provider.embed(
-        EmbedRequest(model=body.embedding.model, api_key=body.embedding.api_key, inputs=[query_text[:8000]])
+        EmbedRequest(model=body.embedding.model, api_key=body.embedding.api_key, inputs=[query_text[:8000]],
+                     dimensions=body.embedding.request_dimensions, expected_dimension=body.embedding.dimension)
     )
     if not emb.vectors:
         raise AppError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected response.", retryable=False)
@@ -122,10 +125,13 @@ async def retrieve_chunks(ctx: ChatContext, query_text: str) -> list[RetrievedCh
                 document_ids=body.document_ids,
                 query_embedding=emb.vectors[0],
                 query_text=query_text,
+                embedding_provider=body.embedding.provider,
                 embedding_model=body.embedding.model,
+                embedding_dimension=body.embedding.dimension,
                 top_k=ctx.top_k,
                 min_similarity=ctx.min_similarity,
                 max_context_chars=ctx.max_context_chars,
+                vectors=ctx.vectors,
             )
     except AppError:
         raise

@@ -19,8 +19,8 @@ const upload = async (u: Parameters<typeof client>[1], files: Parameters<typeof 
 const notes = (name = "notes.txt", text = `Cells are the basic unit of life ${randomUUID()}`) => ({ name, type: "text/plain", data: textFile(text) });
 
 async function insertChunk(documentId: string, ownerId: string, content: string, version = 1) {
-  await db.$executeRaw`INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingModel")
-    VALUES (${randomUUID()}, ${documentId}, ${ownerId}, 0, ${version}, ${content}, 5, 'mock-embed')`;
+  await db.$executeRaw`INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingProvider","embeddingModel")
+    VALUES (${randomUUID()}, ${documentId}, ${ownerId}, 0, ${version}, ${content}, 5, 'mock', 'mock-embed')`;
 }
 
 describe("upload", () => {

@@ -20,6 +20,7 @@ _PATTERNS = [
     re.compile(r"sk-or-v1-[A-Za-z0-9_\-]{6,}"),
     re.compile(r"sk-(?:proj-)?[A-Za-z0-9_\-]{12,}"),
     re.compile(r"gsk_[A-Za-z0-9]{8,}"),
+    re.compile(r"pcsk_[A-Za-z0-9_\-]{8,}"),  # Pinecone API keys
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-~+/=]{8,}"),
     re.compile(r"(?i)(api[_-]?key|authorization|x-api-key)(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]{6,}"),
 ]

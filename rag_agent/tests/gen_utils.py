@@ -51,7 +51,7 @@ def payload(kind: str = "MCQ", *, grounding: str = "SOURCE_ONLY", topic: str | N
     return {
         "request_id": uuid.uuid4().hex, "user_id": user,
         "chat": {"provider": provider, "api_key": key, "model": model, "params": {"temperature": 0.2, "top_p": None, "max_output_tokens": 2000}},
-        "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed"} if emb else None,
+        "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed", "dimension": 1536} if emb else None,
         "context_tokens": context_tokens, "grounding": grounding,
         "sources": {"topic": topic, "pasted_text": pasted, "document_ids": list(docs)},
         "spec": s, "avoid": list(avoid), "cross_check": cross_check, "limits": limits or {},

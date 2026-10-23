@@ -20,7 +20,8 @@ function buildCsp(nonce: string): string {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' blob: data:",
+    // Google profile pictures (the backend only ever stores https URLs on *.googleusercontent.com).
+    "img-src 'self' blob: data: https://*.googleusercontent.com",
     "font-src 'self'",
     `connect-src 'self'${dev ? " ws:" : ""}`,
     "object-src 'none'",
@@ -46,6 +47,7 @@ export function proxy(request: NextRequest) {
   const csp = buildCsp(nonce);
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("x-pathname", pathname); // lets server layouts vary on the route (e.g. the signed-in redirect on auth pages)
   requestHeaders.set("content-security-policy", csp);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });

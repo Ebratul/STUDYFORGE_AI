@@ -32,8 +32,8 @@ async function readyDoc(u: TestUser, over: Record<string, unknown> = {}) {
   });
 }
 async function insertChunk(documentId: string, ownerId: string, model = "mock-embed", version = 1) {
-  await db.$executeRaw`INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingModel")
-    VALUES (${randomUUID()}, ${documentId}, ${ownerId}, 0, ${version}, 'Cells are the unit of life', 5, ${model})`;
+  await db.$executeRaw`INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingProvider","embeddingModel")
+    VALUES (${randomUUID()}, ${documentId}, ${ownerId}, 0, ${version}, 'Cells are the unit of life', 5, 'mock', ${model})`;
 }
 const docOnlyConv = async (u: TestUser, documentIds: string[]) => (await (await client(t, u).post("/api/conversations", { mode: "DOCUMENT_ONLY", documentIds })).json()).conversation.id as string;
 const send = (u: TestUser, id: string, content: string) => client(t, u).post(`/api/conversations/${id}/messages`, { content });
@@ -46,11 +46,11 @@ describe("PUT /api/ai/connection — saving", () => {
     const text = await res.text();
     expect(text).not.toContain(KEY);
     const body = JSON.parse(text);
-    expect(body.checks).toMatchObject({ auth: { ok: true }, chat: { ok: true }, embedding: { ok: true, dimension: 1536 } });
-    expect(body).toMatchObject({ reembedRequired: false, documentsAffected: 0 });
+    expect(body.checks).toMatchObject({ auth: { ok: true }, chat: { ok: true }, chatParams: { ok: null, skipped: true }, embedding: { ok: true }, dimension: { ok: true, dimension: 1536 }, database: { ok: true } });
+    expect(body.embeddingChange).toEqual({ status: "activated", documents: 0 });
     expect(body.connection).toMatchObject({
       configured: true, provider: "mock", providerLabel: "Mock (testing only)", apiKey: { configured: true, masked: "••••-key", status: "VALID" },
-      chatModelId: "mock-chat-custom", embeddingModelId: "mock-embed", embeddingDimension: 1536, expectedDimension: 1536, mixedProviders: false,
+      chatModelId: "mock-chat-custom", embeddingModelId: "mock-embed", embeddingDimension: 1536, embeddingRequestDimensions: null, dimensionLimits: { min: 8, max: 4096 }, defaultEmbeddingDimension: null, reindex: null, mixedProviders: false,
     });
     expect(body.connection.validatedAt).toBeTruthy();
     expect(body.connection.costNote).toMatch(/two tiny paid requests/);
@@ -63,7 +63,7 @@ describe("PUT /api/ai/connection — saving", () => {
     expect(decryptSecret(row, `${u.id}:MOCK`)).toBe(KEY);
     const prefs = await db.modelPreference.findMany({ where: { userId: u.id }, orderBy: { task: "asc" } });
     expect(prefs.map((p) => [p.task, p.modelId, p.credentialId === row.id, p.validatedAt !== null])).toEqual([["DEFAULT", "mock-chat-custom", true, true], ["EMBEDDING", "mock-embed", true, true]]);
-    expect(prefs.find((p) => p.task === "EMBEDDING")?.embeddingDimension).toBe(1536);
+    expect(prefs.find((p) => p.task === "EMBEDDING")).toMatchObject({ embeddingDimension: 1536, embeddingRequestDimensions: null });
   });
 
   it("derives the provider from the key (OpenRouter is the default) and never accepts a provider or URL", async () => {
@@ -158,23 +158,26 @@ describe("PUT /api/ai/connection — failures never change the active configurat
     expect(await snapshot()).toBe(before);
   });
 
-  it("an embedding model with the wrong dimension is refused with the measured number", async () => {
+  it("a size the model cannot produce is refused with the numbers that were measured, and nothing changes", async () => {
     const { u, before, snapshot } = await configured();
-    const err = (await (await put(u, good({ embeddingModelId: "wide-embed-3072" }))).json()).error;
-    expect(err.details.checks.embedding).toMatchObject({ ok: false, code: "EMBEDDING_DIMENSION_MISMATCH", dimension: 3072 });
-    expect(err.details.fields.embeddingModelId).toMatch(/3072/);
+    const err = (await (await put(u, good({ embeddingModelId: "wide-embed-3072", embeddingDimension: 1536 }))).json()).error;
+    expect(err.details.checks.embedding).toMatchObject({ ok: true }); // the model itself works
+    expect(err.details.checks.dimension).toMatchObject({ ok: false, code: "EMBEDDING_DIMENSION_MISMATCH", dimension: 3072, native_dimension: 3072 });
+    expect(err.details.checks.database).toMatchObject({ skipped: true });
+    expect(err.details.fields.embeddingDimension).toMatch(/3072/);
+    expect(err.details.fields.embeddingModelId).toBeUndefined();
     expect(await snapshot()).toBe(before);
-    // defence in depth: even if the AI service reported "ok" with another length, the backend refuses to activate it
-    t.rag.validateScript = (req) => ({ ok: true, provider: req.provider, embedding_dimension: 768, checks: { auth: { ok: true }, chat: { ok: true }, embedding: { ok: true, dimension: 768 } } });
-    const res = await put(u, good({ embeddingModelId: "narrow-embed" }));
+    // defence in depth: even if the AI service reported "ok" with a length other than the one asked for, the backend refuses to activate it
+    t.rag.validateScript = (req) => ({ ok: true, provider: req.provider, embedding_dimension: 768, checks: { auth: { ok: true }, chat: { ok: true }, chat_params: { ok: null, skipped: true }, embedding: { ok: true, dimension: 768 } } });
+    const res = await put(u, good({ embeddingModelId: "narrow-embed", embeddingDimension: 1024 }));
     expect(res.status).toBe(422);
-    expect((await res.json()).error.details.fields.embeddingModelId).toMatch(/768/);
+    expect((await res.json()).error.details.checks.dimension).toMatchObject({ ok: false, code: "EMBEDDING_DIMENSION_MISMATCH", dimension: 768 });
     expect(await snapshot()).toBe(before);
   });
 
   it("non-finite or malformed provider answers are surfaced safely (no activation)", async () => {
     const { u, before, snapshot } = await configured();
-    t.rag.validateScript = (req) => ({ ok: false, provider: req.provider, embedding_dimension: null, checks: { auth: { ok: true }, chat: { ok: true }, embedding: { ok: false, code: "PROVIDER_ERROR", message: "The AI provider returned an unexpected response." } } });
+    t.rag.validateScript = (req) => ({ ok: false, provider: req.provider, embedding_dimension: null, checks: { auth: { ok: true }, chat: { ok: true }, chat_params: { ok: null, skipped: true }, embedding: { ok: false, code: "PROVIDER_ERROR", message: "The AI provider returned an unexpected response." } } });
     const res = await put(u, good({ embeddingModelId: "nan-embed" }));
     expect(res.status).toBe(422);
     expect((await res.json()).error.details.fields.embeddingModelId).toMatch(/unexpected response/);
@@ -291,7 +294,7 @@ describe("the saved configuration drives the real features", () => {
     await runDueJobs(ingestHandlers(t.rag, t.storage));
     const doc = await db.document.findUniqueOrThrow({ where: { id } });
     expect(doc).toMatchObject({ status: "FAILED", statusCode: "EMBEDDING_DIMENSION_MISMATCH" });
-    expect(doc.statusDetail).toMatch(/1536/);
+    expect(doc.statusDetail).toMatch(/different size/);
   });
 
   it("an EMBEDDING_DIMENSION_MISMATCH from the AI service becomes clear guidance in chat", async () => {
@@ -299,28 +302,48 @@ describe("the saved configuration drives the real features", () => {
     await put(u, good());
     const d = await readyDoc(u);
     t.rag.chatScript = async function* () {
-      yield { event: "error", data: { code: "EMBEDDING_DIMENSION_MISMATCH", message: "The selected embedding model does not produce 1536-dimensional vectors.", retryable: false } };
+      yield { event: "error", data: { code: "EMBEDDING_DIMENSION_MISMATCH", message: "The embedding model returned vectors of a different size than configured.", retryable: false } };
     };
     const conv = await docOnlyConv(u, [d.id]);
     const events = await readSse(await send(u, conv, "What are cells?"));
-    expect(events.find((e) => e.event === "error")!.data.message).toMatch(/expects 1536 dimensions/);
+    expect(events.find((e) => e.event === "error")!.data.message).toMatch(/different size than the one saved/);
   });
 });
 
 describe("embedding identity: changing the model never silently reuses old vectors", () => {
-  it("documents indexed with another model become stale, are excluded with a clear message, and the save reports it", async () => {
+  it("changing the model keeps the old index searchable while the new one is built", async () => {
     const u = await createUser();
     await put(u, good());
     const d = await readyDoc(u); // indexed with MOCK / mock-embed, legacy dimension (null ⇒ 1536)
+    await insertChunk(d.id, u.id); // (a chunk without a vector: only the staged-index suite uses real vectors)
     const conv = await docOnlyConv(u, [d.id]);
     expect((await readSse(await send(u, conv, "What are cells?"))).some((e) => e.event === "final")).toBe(true);
-    expect(t.rag.chatCalls.at(-1)).toMatchObject({ embedding: { model: "mock-embed" }, document_ids: [d.id] });
+    expect(t.rag.chatCalls.at(-1)).toMatchObject({ embedding: { model: "mock-embed", dimension: 1536 }, document_ids: [d.id] });
 
     const changed = await (await put(u, good({ embeddingModelId: "mock-embed-v2" }))).json();
-    expect(changed).toMatchObject({ reembedRequired: true, documentsAffected: 1 });
-    expect(changed.connection.documents).toEqual({ ready: 1, stale: 1, processing: 0 });
+    expect(changed.embeddingChange).toEqual({ status: "reindexing", documents: 1 });
+    expect(changed.connection).toMatchObject({ embeddingModelId: "mock-embed", embeddingDimension: 1536, reindex: { status: "BUILDING", modelId: "mock-embed-v2", dimension: 1536 } });
+    expect(changed.connection.documents).toEqual({ ready: 1, stale: 0, processing: 0 }); // nothing is stale: the active index is unchanged
+
+    // the document is still searched with the OLD model and nothing was lost
+    const ev = await readSse(await send(u, conv, "And now?"));
+    expect(ev.some((e) => e.event === "final")).toBe(true);
+    expect(t.rag.chatCalls.at(-1)).toMatchObject({ embedding: { model: "mock-embed" }, document_ids: [d.id] });
+  });
+
+  it("documents whose recorded identity differs from the active configuration are excluded with a clear message", async () => {
+    const u = await createUser();
+    await put(u, good());
+    const d = await readyDoc(u);
+    const conv = await docOnlyConv(u, [d.id]);
+    expect((await readSse(await send(u, conv, "What are cells?"))).some((e) => e.event === "final")).toBe(true);
+
+    // e.g. indexed under another model before the configuration was changed by an older release
+    await db.document.update({ where: { id: d.id }, data: { embeddingModel: "mock-embed-v0" } });
+    const connection = (await (await client(t, u).get("/api/ai/connection")).json()).connection;
+    expect(connection.documents).toEqual({ ready: 1, stale: 1, processing: 0 });
     const docs = (await (await client(t, u).get("/api/documents")).json()).items;
-    expect(docs[0]).toMatchObject({ embeddingStale: true, embeddingModel: "mock-embed", embeddingDimension: null });
+    expect(docs[0]).toMatchObject({ embeddingStale: true, embeddingModel: "mock-embed-v0" });
 
     const calls = t.rag.chatCalls.length;
     const res = await send(u, conv, "And now?");

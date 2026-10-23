@@ -19,10 +19,10 @@ from tests.fakes import FakeProvider
 SECRET_TEXT = "Zebrafish photosynthesis quokka vignette"
 
 
-def meta(doc_id, owner="alice", version=1, filename="notes.txt", provider="mock", key=VALID_KEY, model="mock-embed") -> IngestMeta:
+def meta(doc_id, owner="alice", version=1, filename="notes.txt", provider="mock", key=VALID_KEY, model="mock-embed", dimension=1536, request_dimensions=None) -> IngestMeta:
     return IngestMeta.model_validate({
         "document_id": doc_id, "owner_id": owner, "filename": filename, "mime_type": "text/plain", "processing_version": version,
-        "embedding": {"provider": provider, "api_key": key, "model": model},
+        "embedding": {"provider": provider, "api_key": key, "model": model, "dimension": dimension, "request_dimensions": request_dimensions},
     })
 
 
@@ -123,7 +123,7 @@ async def test_rollback_on_embedding_failure_keeps_old_version(db, settings):
 
 
 async def test_rollback_when_store_fails_midway(db, settings):
-    """A DB error while inserting (wrong-dimension vector for the last chunk) must leave the old chunk set untouched."""
+    """A DB error while inserting (a vector pgvector refuses: NaN, right length) must leave the old chunk set untouched."""
     doc = await add_doc(db, "alice")
     await ingest(db, meta(doc, version=1), b"stable old content " * 40)
     before = await chunks_of(db, doc)
@@ -131,7 +131,7 @@ async def test_rollback_when_store_fails_midway(db, settings):
     class BadLast(FakeProvider):
         async def embed(self, req):
             res = await super().embed(req)
-            res.vectors[-1] = [0.1, 0.2]  # not 1536-d: rejected by vector(1536) at INSERT time
+            res.vectors[-1] = [float("nan")] * 1536  # right length, but pgvector rejects NaN at INSERT time
             return res
 
     reg = ProviderRegistry(settings)
@@ -178,8 +178,8 @@ async def test_db_trigger_rejects_foreign_owner_chunks(db):
     async with db.connection() as conn:
         with pytest.raises(Exception, match="ownerId must equal"):
             await conn.execute(
-                'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingModel") '
-                "VALUES ('c1',%s,'mallory',0,1,'x',1,'m')", (doc,))
+                'INSERT INTO "DocumentChunk" ("id","documentId","ownerId","chunkIndex","processingVersion","content","tokenCount","embeddingProvider","embeddingModel") '
+                "VALUES ('c1',%s,'mallory',0,1,'x',1,'mock','m')", (doc,))
 
 
 @pytest.mark.parametrize("fname,data,code,status", [

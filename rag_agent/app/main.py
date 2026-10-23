@@ -13,13 +13,15 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api import analyze, chat, generate, health, ingest, providers
+from app.api import analyze, chat, generate, health, ingest, providers, reindex
+from app.api import vectors as vectors_api
 from app.config import Settings, load_settings_or_exit
 from app.db import make_pool
 from app.errors import AppError, ErrorCode
 from app.logging import configure_logging, request_id_var
 from app.providers.registry import ProviderRegistry
 from app.tracing import apply_tracing_env
+from app.vectorstore import VectorRuntime
 
 log = logging.getLogger("rag.app")
 _RID = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
@@ -68,12 +70,14 @@ class RequestContextMiddleware:
         await self.app(scope, limited_receive, send_with_id)
 
 
-def create_app(settings: Settings | None = None, *, registry: ProviderRegistry | None = None, pool=None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, registry: ProviderRegistry | None = None, pool=None, vectors: VectorRuntime | None = None) -> FastAPI:
     settings = settings or load_settings_or_exit()
     configure_logging(settings.log_level)
     apply_tracing_env(settings)
     if settings.ocr_enabled:
         log.warning("ocr_enabled_but_no_engine_configured: scanned PDFs will be reported as NEEDS_OCR")
+    own_vectors = vectors is None
+    vectors = vectors if vectors is not None else VectorRuntime.from_settings(settings)  # builds no network client in pgvector mode
     own_pool = pool is None and bool(settings.database_url.get_secret_value())
     if own_pool:
         pool = make_pool(settings.database_url.get_secret_value())
@@ -85,11 +89,14 @@ def create_app(settings: Settings | None = None, *, registry: ProviderRegistry |
         yield
         if own_pool:
             await pool.close()
+        if own_vectors:
+            await vectors.aclose()
 
     app = FastAPI(title="StudyForge rag_agent", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.registry = registry or ProviderRegistry(settings)
     app.state.pool = pool
+    app.state.vectors = vectors
     app.state.ingests_active = 0
     app.add_middleware(RequestContextMiddleware, settings=settings)
 
@@ -121,6 +128,8 @@ def create_app(settings: Settings | None = None, *, registry: ProviderRegistry |
     app.include_router(health.router)
     app.include_router(providers.router)
     app.include_router(ingest.router)
+    app.include_router(reindex.router)
+    app.include_router(vectors_api.router)
     app.include_router(chat.router)
     app.include_router(generate.router)
     app.include_router(analyze.router)

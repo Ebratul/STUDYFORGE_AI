@@ -13,8 +13,9 @@ from decimal import Decimal
 
 from pydantic import BaseModel, SecretStr
 
-from app.config import Settings
+from app.config import MAX_EMBEDDING_DIMENSION, MIN_EMBEDDING_DIMENSION, Settings
 from app.errors import ErrorCode, ProviderError
+from app.providers.embedding import check_vectors
 from app.providers.base import (
     ChatChunk,
     ChatMessage,
@@ -62,12 +63,12 @@ _STOPWORDS = frozenset(
 )
 
 
-def hash_embed(text: str) -> list[float]:
-    vec = [0.0] * DIM
+def hash_embed(text: str, dim: int = DIM) -> list[float]:
+    vec = [0.0] * dim
     all_toks = tokenize(text)
     toks = [t for t in all_toks if t not in _STOPWORDS] or all_toks or ["\x00empty"]
     for t in toks:
-        idx = int.from_bytes(hashlib.sha256(t.encode()).digest()[:4], "big") % DIM
+        idx = int.from_bytes(hashlib.sha256(t.encode()).digest()[:4], "big") % dim
         vec[idx] += 1.0
     norm = math.sqrt(sum(v * v for v in vec))
     return [v / norm for v in vec]
@@ -119,6 +120,40 @@ def _bn_digit(n: int) -> str:
     return "".join("০১২৩৪৫৬৭৮৯"[int(d)] for d in str(n))
 
 
+_MOCK_N = re.compile(r"^mock-embed-(\d+)$")
+
+
+def embedding_behaviour(model: str) -> tuple[int, str]:
+    """(native dimension, how the model treats the `dimensions` parameter) for a mock embedding model id.
+
+    flex   -> honours any size 8..native         ignore -> silently returns its native size (like many real models)
+    strict -> rejects the parameter (HTTP 400)   native-N models and plain `mock-embed` ignore it
+    """
+    if model == "mock-embed-flex":
+        return 1024, "flex"
+    if model == "mock-embed-ignore":
+        return 768, "ignore"
+    if model == "mock-embed-strict":
+        return 1536, "strict"
+    m = _MOCK_N.match(model)
+    if m and MIN_EMBEDDING_DIMENSION <= int(m.group(1)) <= MAX_EMBEDDING_DIMENSION:
+        return int(m.group(1)), "ignore"
+    return DIM, "ignore"
+
+
+def _mock_vectors(req: EmbedRequest) -> list[list[float]]:
+    native, mode = embedding_behaviour(req.model)
+    dim = native
+    if req.dimensions is not None:
+        if mode == "strict":
+            raise ProviderError(ErrorCode.PROVIDER_ERROR, retryable=False)  # what a 400 for an unknown parameter is normalised to
+        if mode == "flex":
+            if not MIN_EMBEDDING_DIMENSION <= req.dimensions <= native:
+                raise ProviderError(ErrorCode.PROVIDER_ERROR, retryable=False)
+            dim = req.dimensions
+    return [hash_embed(t, dim) for t in req.inputs]
+
+
 class MockProvider:
     id = "mock"
 
@@ -144,7 +179,7 @@ class MockProvider:
             [
                 ModelInfo(id="mock-chat", name="Mock Chat", context_length=32768, capabilities=caps(True, False, "yes"), capability_source="catalogue"),
                 ModelInfo(id="mock-chat-plain", name="Mock Chat (plain)", context_length=32768, capabilities=caps(True, False, "no"), capability_source="catalogue"),
-                ModelInfo(id="mock-embed", name="Mock Embeddings", context_length=8192, capabilities=caps(False, True, "no"), capability_source="catalogue", embedding_dimensions="compatible"),
+                ModelInfo(id="mock-embed", name="Mock Embeddings", context_length=8192, capabilities=caps(False, True, "no"), capability_source="catalogue"),
             ],
             key=lambda m: m.id,
         )
@@ -506,18 +541,32 @@ class MockProvider:
         if not model.startswith(prefix):
             raise ProviderError(ErrorCode.MODEL_NOT_FOUND)
 
+    async def supported_parameters(self, model: str) -> list[str] | None:
+        """`mock-chat-limited` mirrors real free models that list no penalty parameters; every other mock chat model lists all six."""
+        base = ["max_tokens", "seed", "temperature", "top_p"]
+        return base if model == "mock-chat-limited" else sorted([*base, "frequency_penalty", "presence_penalty"])
+
+    async def public_models(self, kind: str) -> list[dict]:
+        if kind == "embedding":
+            return [{"id": "mock-embed", "name": "Mock Embeddings", "context_length": 8192, "free": True, "supported_parameters": None}]
+        return [
+            {"id": "mock-chat", "name": "Mock Chat", "context_length": 32768, "free": True, "supported_parameters": await self.supported_parameters("mock-chat")},
+            {"id": "mock-chat-limited", "name": "Mock Chat (limited)", "context_length": 32768, "free": True, "supported_parameters": await self.supported_parameters("mock-chat-limited")},
+        ]
+
     async def probe_embedding(self, req: EmbedRequest) -> int:
         self.calls.append("probe_embedding")
         self._check_auth(req.api_key)
         self.precheck_model("embedding", req.model)
         if req.model == "mock-embed-nan":
             raise ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected embedding response.", retryable=False)
-        return 3072 if req.model == "mock-embed-3072" else DIM
+        return len(_mock_vectors(req)[0])
 
     # ---------------------------------------------------------------- embeddings
     async def embed(self, req: EmbedRequest) -> EmbedResult:
         self.calls.append("embed")
         self._check_auth(req.api_key)
-        vecs = [hash_embed(t) for t in req.inputs]
+        vecs = _mock_vectors(req)
+        check_vectors(vecs, req.expected_dimension)
         n = sum(len(t) for t in req.inputs) // 4
         return EmbedResult(vectors=vecs, usage=Usage(prompt_tokens=n, total_tokens=n))

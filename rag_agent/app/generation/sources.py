@@ -111,7 +111,13 @@ _SCOPE = """
   AND c."documentId" = ANY(%(doc_ids)s)
   AND c."processingVersion" = d."processingVersion"
   AND d."status" = 'READY'
+  AND c."embeddingModel" = d."embeddingModel"
+  AND c."embeddingDimension" = COALESCE(d."embeddingDimension", 1536)
+  AND (d."embeddingProvider" IS NULL OR c."embeddingProvider" = lower(d."embeddingProvider"::text))
 """
+# ^ Only the chunk set matching the identity recorded on the Document row (its ACTIVE index). While a staged re-index exists, the same
+#   document version has a second chunk set; reading both would duplicate every passage. (1536 = what documents indexed before the
+#   dimension was recorded always had.)
 
 _OUTLINE_SQL = f"""
 SELECT c."id", c."documentId", c."chunkIndex",
@@ -141,7 +147,8 @@ def even_picks(cnt: int, k: int) -> list[int]:
 async def sample_chunks(conn, *, owner_id: str, document_ids: list[str], max_chunks: int = POOL_MAX_CHUNKS) -> list[RetrievedChunk]:
     """Deterministic coverage sample (no embedding needed): chunks spread evenly over each authorised document.
 
-    Same isolation as search_chunks: owner on chunk AND document, authorised ids only, current processingVersion, READY.
+    Same isolation as search_chunks: owner on chunk AND document, authorised ids only, current processingVersion, READY, and only the
+    document's active embedding identity (never a staged set).
     """
     from psycopg.rows import dict_row
 

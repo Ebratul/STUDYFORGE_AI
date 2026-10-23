@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EnvError, parseEnv } from "../../src/config/env.js";
+import { EnvError, isGoogleConfigured, parseEnv } from "../../src/config/env.js";
 
 const valid = {
   DATABASE_URL: "postgresql://u:p@localhost:5432/db",
@@ -60,6 +60,17 @@ describe("environment validation", () => {
     expect(parseEnv(prod).ALLOW_MOCK_PROVIDER).toBe(false);
   });
 
+  it("validates Cloudinary settings", () => {
+    const c = { ...valid, STORAGE_DRIVER: "cloudinary", CLOUDINARY_CLOUD_NAME: "demo", CLOUDINARY_API_KEY: "k", CLOUDINARY_API_SECRET: "s" };
+    expect(parseEnv(c)).toMatchObject({ STORAGE_DRIVER: "cloudinary", CLOUDINARY_FOLDER: "studyforge/documents" });
+    expect(parseEnv(c).CLOUDINARY_MAX_FILE_BYTES).toBeUndefined();
+    expect(parseEnv({ ...c, CLOUDINARY_MAX_FILE_BYTES: "10485760" }).CLOUDINARY_MAX_FILE_BYTES).toBe(10485760);
+    expect(() => parseEnv({ ...c, CLOUDINARY_FOLDER: "../escape" })).toThrow(/CLOUDINARY_FOLDER/);
+    expect(() => parseEnv({ ...c, CLOUDINARY_API_SECRET: "" })).toThrow(/CLOUDINARY_API_SECRET/);
+    // credentials are optional while another driver is selected
+    expect(parseEnv({ ...valid, STORAGE_DRIVER: "local" }).STORAGE_DRIVER).toBe("local");
+  });
+
   it("requires S3 settings when STORAGE_DRIVER=s3", () => {
     expect(() => parseEnv({ ...valid, STORAGE_DRIVER: "s3" })).toThrow(/S3_BUCKET/);
   });
@@ -77,6 +88,27 @@ describe("environment validation", () => {
       expect.unreachable();
     } catch (e) {
       expect((e as Error).message).not.toContain("super-secret-short");
+    }
+  });
+});
+
+describe("Google sign-in configuration", () => {
+  const google = { AUTH_GOOGLE_ID: "123-test.apps.googleusercontent.com", AUTH_GOOGLE_SECRET: "test-only-google-client-secret" };
+
+  it("is optional and off by default", () => {
+    expect(isGoogleConfigured(parseEnv(valid))).toBe(false);
+  });
+
+  it("is on when both the client id and secret are set", () => {
+    expect(isGoogleConfigured(parseEnv({ ...valid, ...google }))).toBe(true);
+  });
+
+  it("refuses half a configuration, without echoing the values", () => {
+    expect(() => parseEnv({ ...valid, AUTH_GOOGLE_ID: google.AUTH_GOOGLE_ID })).toThrow(/set both or neither/);
+    try {
+      parseEnv({ ...valid, AUTH_GOOGLE_SECRET: google.AUTH_GOOGLE_SECRET });
+    } catch (e) {
+      expect(String(e)).not.toContain(google.AUTH_GOOGLE_SECRET);
     }
   });
 });

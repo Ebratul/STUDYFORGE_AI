@@ -17,6 +17,7 @@ import openai
 from pydantic import ValidationError
 
 from app.errors import AppError, ErrorCode, ProviderError
+from app.redact import scrub
 
 _CONTEXT_RE = re.compile(
     r"(context[_ ]length|maximum context|context window|too many tokens|reduce the length|token limit|prompt is too long|"
@@ -26,6 +27,34 @@ _CONTEXT_RE = re.compile(
 _FILTER_RE = re.compile(r"(content[_ ]filter|content[_ ]policy|content management|moderation|flagged|guardrail|safety system)", re.I)
 _MODEL_RE = re.compile(r"(model[_ ]not[_ ]found|not a valid model|invalid model|model .{0,80}(does not exist|not found|decommissioned|no longer supported)|no endpoints found)", re.I)
 _QUOTA_RE = re.compile(r"(insufficient[_ ]quota|exceeded your current quota|billing|credits|payment required|out of budget|spend limit)", re.I)
+
+
+_ENDPOINTS = {"chat": "POST /chat/completions", "embed": "POST /embeddings", "models": "GET /models or /key"}
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9 ._\-]{1,40}$")
+
+
+def _token(value: Any, rx: re.Pattern[str] = _SAFE_TOKEN) -> str | None:
+    """A short identifier (e.g. an upstream error code) or None. Free text is never accepted, and secrets are scrubbed regardless."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value)
+    return scrub(text) if rx.match(text) and scrub(text) == text else None
+
+
+def build_diagnostics(status: int | None, body: Any = None, where: str = "chat", **extra: Any) -> dict[str, Any]:
+    """What a developer needs to find the failing call, and nothing else: endpoint, HTTP status and short allow-listed upstream tokens.
+    Upstream messages/bodies, headers, URLs and keys are never copied."""
+    d: dict[str, Any] = {"endpoint": _ENDPOINTS.get(where), "http_status": status}
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        d["upstream_code"] = _token(err.get("code"))
+        d["upstream_type"] = _token(err.get("type"))
+        meta = err.get("metadata")
+        if isinstance(meta, dict):
+            d["upstream_provider"] = _token(meta.get("provider_name"), _SAFE_NAME)
+    d.update(extra)
+    return {k: v for k, v in d.items() if v is not None}
 
 
 def _body_parts(body: Any) -> tuple[str, str]:
@@ -71,8 +100,10 @@ def classify_http(status: int, body: Any = None, headers: Mapping[str, str] | No
     probe = f"{code_tokens} {msg}"
     retry_after = parse_retry_after(headers)
 
+    diag = build_diagnostics(status, body, where)
+
     def err(code: ErrorCode, *, retryable: bool | None = None, ra: int | None = None) -> ProviderError:
-        return ProviderError(code, retryable=retryable, retry_after_seconds=ra)
+        return ProviderError(code, retryable=retryable, retry_after_seconds=ra, diagnostics=diag)
 
     if status == 401:
         return err(ErrorCode.PROVIDER_AUTH_INVALID)
@@ -122,7 +153,7 @@ def normalize_exception(exc: BaseException, *, where: str = "chat") -> ProviderE
     if isinstance(exc, AppError):
         return ProviderError(exc.code, exc.message, retryable=exc.retryable, retry_after_seconds=exc.retry_after_seconds)
     if isinstance(exc, (asyncio.TimeoutError, TimeoutError, httpx.TimeoutException, openai.APITimeoutError)):
-        return ProviderError(ErrorCode.PROVIDER_TIMEOUT)
+        return ProviderError(ErrorCode.PROVIDER_TIMEOUT, diagnostics=build_diagnostics(None, None, where, failure="timeout"))
     if isinstance(exc, openai.APIStatusError):
         return classify_http(exc.status_code, _openai_status_body(exc), exc.response.headers, where=where)
     if isinstance(exc, httpx.HTTPStatusError):
@@ -132,9 +163,9 @@ def normalize_exception(exc: BaseException, *, where: str = "chat") -> ProviderE
             body = None
         return classify_http(exc.response.status_code, body, exc.response.headers, where=where)
     if isinstance(exc, (openai.APIConnectionError, httpx.TransportError, ConnectionError, OSError)):
-        return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE)
+        return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, diagnostics=build_diagnostics(None, None, where, failure="connection"))
     if isinstance(exc, (json.JSONDecodeError, ValidationError, KeyError, IndexError, TypeError, ValueError, AttributeError)):
-        return ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected response.", retryable=False)
+        return ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected response.", retryable=False, diagnostics=build_diagnostics(None, None, where, failure="unexpected_response"))
     if isinstance(exc, openai.OpenAIError):
         return ProviderError(ErrorCode.PROVIDER_ERROR, retryable=False)
     return ProviderError(ErrorCode.PROVIDER_ERROR, retryable=False)

@@ -11,12 +11,13 @@ export const connectionInputs = (page: Page) => ({
   embedding: page.locator('input[name="embeddingModelId"]'),
 });
 
-/** Fills the form (only the fields given) and presses "Test and save". Does not assert the outcome. */
-export async function submitConnection(page: Page, v: { key?: string; chat?: string; embedding?: string }) {
+/** Fills the form (only the fields given, including the optional vector size) and presses "Test and save". Does not assert the outcome. */
+export async function submitConnection(page: Page, v: { key?: string; chat?: string; embedding?: string; dimension?: string }) {
   const f = connectionInputs(page);
   if (v.key !== undefined) await f.key.fill(v.key);
   if (v.chat !== undefined) await f.chat.fill(v.chat);
   if (v.embedding !== undefined) await f.embedding.fill(v.embedding);
+  if (v.dimension !== undefined) await page.locator('input[name="embeddingDimension"]').fill(v.dimension);
   await page.getByTestId("save-connection").click();
 }
 

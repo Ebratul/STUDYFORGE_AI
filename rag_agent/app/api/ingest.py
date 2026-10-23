@@ -50,7 +50,8 @@ async def ingest(request: Request, file: UploadFile = File(...), meta: str = For
     async def gen() -> AsyncIterator[bytes]:
         try:
             source = run_ingest(
-                settings=settings, pool=pool, registry=app.state.registry, meta=parsed, filename_ext=_ext(parsed.filename), data=data
+                settings=settings, pool=pool, registry=app.state.registry, meta=parsed, filename_ext=_ext(parsed.filename), data=data,
+                vectors=app.state.vectors,
             )
             async for ev in with_disconnect(request, source):
                 yield (json.dumps(ev, ensure_ascii=False) + "\n").encode()

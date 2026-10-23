@@ -27,6 +27,11 @@ class ChatParams(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+    # Connection test only: ask the router to fail instead of silently dropping a parameter the chosen model's providers ignore.
+    require_parameters: bool = False
 
 
 @dataclass
@@ -67,6 +72,10 @@ class EmbedRequest:
     model: str
     api_key: SecretStr = field(repr=False)
     inputs: list[str]
+    # The OpenAI-compatible `dimensions` request parameter; sent iff not None (never guessed from the model id).
+    dimensions: int | None = None
+    # Strict output check: when set, EVERY returned vector must have exactly this length (never padded or truncated).
+    expected_dimension: int | None = None
 
 
 class EmbedResult(BaseModel):
@@ -99,7 +108,6 @@ class ModelInfo(BaseModel):
     context_length: int | None = None
     capabilities: ModelCapabilities
     capability_source: CapabilitySource
-    embedding_dimensions: Literal["compatible", "incompatible", "unknown"] | None = None
 
 
 @runtime_checkable

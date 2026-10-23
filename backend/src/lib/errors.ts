@@ -22,6 +22,7 @@ export type ErrorCode =
   | "INVALID_INVITE"
   | "AI_CONFIG_INVALID"
   | "UPSTREAM_UNAVAILABLE"
+  | "STORAGE_UNAVAILABLE"
   | "INTERNAL";
 
 const STATUS: Record<ErrorCode, number> = {
@@ -48,6 +49,7 @@ const STATUS: Record<ErrorCode, number> = {
   INVALID_INVITE: 404,
   AI_CONFIG_INVALID: 422,
   UPSTREAM_UNAVAILABLE: 503,
+  STORAGE_UNAVAILABLE: 503,
   INTERNAL: 500,
 };
 

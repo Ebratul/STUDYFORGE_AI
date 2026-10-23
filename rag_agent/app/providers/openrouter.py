@@ -1,13 +1,33 @@
 from __future__ import annotations
 
-from typing import ClassVar
+import re
+import time
+from typing import Any, ClassVar
 
 import httpx
 
 from app.errors import ErrorCode, ProviderError
 from app.providers import catalogue
-from app.providers.base import ModelInfo
+from app.providers.base import ChatParams, ModelInfo
 from app.providers.openai_compat import OpenAICompatProvider
+
+PUBLIC_TTL_SECONDS = 600.0
+_SAFE_PARAM = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+# process-wide cache of the PUBLIC (keyless) model lists: kind -> (fetched_at, models)
+_PUBLIC_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def clear_public_cache() -> None:
+    _PUBLIC_CACHE.clear()
+
+
+def _is_free(pricing: Any) -> bool:
+    if not isinstance(pricing, dict):
+        return False
+    try:
+        return float(pricing.get("prompt", "1")) == 0.0 and float(pricing.get("completion", "0") or 0) == 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 class OpenRouterProvider(OpenAICompatProvider):
@@ -21,6 +41,55 @@ class OpenRouterProvider(OpenAICompatProvider):
 
     def parse_models(self, payload: dict) -> list[ModelInfo]:
         return catalogue.parse_openrouter_models(payload)
+
+    def routing_extra_body(self, params: ChatParams) -> dict[str, Any] | None:
+        # `require_parameters`: route only to providers that honour every parameter we send (otherwise OpenRouter silently drops them).
+        return {"provider": {"require_parameters": True}} if params.require_parameters else None
+
+    async def public_models(self, kind: str) -> list[dict[str, Any]] | None:
+        """Keyless listing (no Authorization header is sent) cached for ten minutes. kind: "chat" | "embedding"."""
+        if kind not in ("chat", "embedding"):
+            raise ProviderError(ErrorCode.VALIDATION, "kind must be chat or embedding.")
+        hit = _PUBLIC_CACHE.get(kind)
+        if hit and time.monotonic() - hit[0] < PUBLIC_TTL_SECONDS:
+            return hit[1]
+        path = "/models" if kind == "chat" else "/embeddings/models"
+        try:
+            async with self._client() as client:
+                data = await self._get_json(client, path, {"Accept": "application/json"}, where="models")
+        except httpx.HTTPError as exc:
+            raise self.normalize_error(exc, where="models") from None
+        out: list[dict[str, Any]] = []
+        for m in data.get("data") or []:
+            if not isinstance(m, dict) or not isinstance(m.get("id"), str) or len(m["id"]) > 200:
+                continue
+            outputs = [str(x) for x in ((m.get("architecture") or {}).get("output_modalities") or [])]
+            if kind == "chat" and (("text" not in outputs and outputs) or "embeddings" in outputs):
+                continue
+            params = m.get("supported_parameters")
+            ctx = m.get("context_length")
+            out.append(
+                {
+                    "id": m["id"],
+                    "name": m["name"][:120] if isinstance(m.get("name"), str) else m["id"],
+                    "context_length": ctx if isinstance(ctx, int) else None,
+                    "free": _is_free(m.get("pricing")),
+                    # None = the listing does not say (treated as unknown, never as "supported")
+                    "supported_parameters": sorted({p for p in params if isinstance(p, str) and _SAFE_PARAM.match(p)}) if isinstance(params, list) else None,
+                }
+            )
+        _PUBLIC_CACHE[kind] = (time.monotonic(), out)
+        return out
+
+    async def supported_parameters(self, model: str) -> list[str] | None:
+        try:
+            models = await self.public_models("chat")
+        except Exception:  # noqa: BLE001 - metadata is a hint; the live check still decides
+            return None
+        for m in models or []:
+            if m["id"] == model:
+                return m["supported_parameters"]
+        return None
 
     async def _check_credentials(self, client: httpx.AsyncClient, headers: dict[str, str]) -> None:
         # GET /models is public on OpenRouter, so it proves nothing about the key. GET /key is authenticated.

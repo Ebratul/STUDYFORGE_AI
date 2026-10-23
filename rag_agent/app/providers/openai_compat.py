@@ -18,8 +18,10 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError
 from app.config import Settings
 from app.errors import ErrorCode, ProviderError
 from app.providers import catalogue
+from app.providers.embedding import check_vectors
 from app.providers.base import (
     ChatChunk,
+    ChatParams,
     ChatMessage,
     ChatRequest,
     ChatResult,
@@ -160,11 +162,20 @@ class OpenAICompatProvider:
     def drop_sampling(self, model: str) -> bool:
         return False
 
-    def embedding_dimensions_param(self, model: str) -> int | None:
-        return self.settings.embedding_dimensions if catalogue.wants_dimensions_param(self.id, model) else None
-
     def parse_models(self, payload: dict) -> list[ModelInfo]:
         raise NotImplementedError
+
+    def routing_extra_body(self, params: ChatParams) -> dict[str, Any] | None:
+        """Provider-specific request fields (OpenRouter overrides this)."""
+        return None
+
+    async def supported_parameters(self, model: str) -> list[str] | None:
+        """Parameters the provider's public metadata lists for `model`; None when the provider publishes no such metadata."""
+        return None
+
+    async def public_models(self, kind: str) -> list[dict[str, Any]] | None:
+        """Keyless model listing for suggestions; None when the provider has no public listing."""
+        return None
 
     async def _check_credentials(self, client: httpx.AsyncClient, headers: dict[str, str]) -> None:
         """Hook for providers whose /models is public (OpenRouter)."""
@@ -190,7 +201,10 @@ class OpenAICompatProvider:
     async def _get_json(self, client: httpx.AsyncClient, path: str, headers: dict[str, str], *, where: str) -> dict:
         resp = await client.get(path, headers=headers)
         if resp.status_code != 200:
-            raise classify_http(resp.status_code, _safe_json(resp), resp.headers, where=where)
+            err = classify_http(resp.status_code, _safe_json(resp), resp.headers, where=where)
+            if err.diagnostics is not None:
+                err.diagnostics["endpoint"] = f"GET {path}"
+            raise err
         try:
             data = resp.json()
         except ValueError:
@@ -251,6 +265,12 @@ class OpenAICompatProvider:
                 kwargs["temperature"] = p.temperature
             if p.top_p is not None:
                 kwargs["top_p"] = p.top_p
+            if p.frequency_penalty is not None:
+                kwargs["frequency_penalty"] = p.frequency_penalty
+            if p.presence_penalty is not None:
+                kwargs["presence_penalty"] = p.presence_penalty
+            if p.seed is not None:
+                kwargs["seed"] = p.seed
         if p.max_output_tokens is not None:
             kwargs["max_tokens"] = p.max_output_tokens
         timeout = httpx.Timeout(
@@ -270,6 +290,7 @@ class OpenAICompatProvider:
             stream_usage=bool(self.stream_usage) if stream else None,
             use_responses_api=False,
             token_param=self.token_param,
+            extra_body=self.routing_extra_body(p),
             **kwargs,
         )
         if response_format is not None:
@@ -418,8 +439,7 @@ class OpenAICompatProvider:
                 ErrorCode.CAPABILITY_UNSUPPORTED,
                 "This provider does not offer embeddings. Choose OpenAI or OpenRouter for document embeddings.",
             )
-        dims = self.settings.embedding_dimensions
-        dim_param = self.embedding_dimensions_param(req.model)
+        dim_param = req.dimensions  # sent iff the caller says so: support was verified at validation time, not guessed from the id
         s = self.settings
         vectors: list[list[float]] = []
         for i in range(0, len(req.inputs), EMBED_BATCH):
@@ -444,16 +464,15 @@ class OpenAICompatProvider:
             got = await with_retries(once, lambda e: self.normalize_error(e, where="embed"))
             if len(got) != len(batch):
                 raise ProviderError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected response.", retryable=False)
-            for v in got:
-                if not isinstance(v, list) or len(v) != dims:
-                    raise ProviderError(ErrorCode.EMBEDDING_DIMENSION_MISMATCH, retryable=False)
+            check_vectors(got, req.expected_dimension)  # fail on the first bad batch
             vectors.extend(got)
+        check_vectors(vectors, req.expected_dimension)  # and across batches when no expected length was given
         return EmbedResult(vectors=vectors, usage=Usage())
 
     async def probe_embedding(self, req: EmbedRequest) -> int:
         """Connection validation: ONE embeddings request for the first input; returns the MEASURED vector length.
 
-        Unlike `embed()` this does not enforce EMBEDDING_DIMENSIONS (so a 3072-d model can be reported accurately), but it still
+        Unlike `embed()` this does not enforce a dimension (the caller compares the measured length with what it asked for), but it still
         requires exactly one non-empty vector of finite numbers. Raw httpx (not LangChain) so nothing is decoded or reshaped on the way.
         """
         if not self.supports_embeddings:
@@ -462,9 +481,8 @@ class OpenAICompatProvider:
                 "This provider does not offer embeddings. Choose OpenAI or OpenRouter for document embeddings.",
             )
         body: dict[str, Any] = {"model": req.model, "input": req.inputs[:1], "encoding_format": "float"}
-        dim_param = self.embedding_dimensions_param(req.model)
-        if dim_param is not None:
-            body["dimensions"] = dim_param
+        if req.dimensions is not None:
+            body["dimensions"] = req.dimensions
         headers = {**self._auth_headers(req.api_key), "Content-Type": "application/json"}
         timeout = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)
 
@@ -477,9 +495,19 @@ class OpenAICompatProvider:
                 raise
             except Exception as exc:  # noqa: BLE001
                 raise self.normalize_error(exc, where="embed") from None
+            payload = _safe_json(resp)
             if resp.status_code != 200:
-                raise classify_http(resp.status_code, _safe_json(resp), resp.headers, where="embed")
-            return _measure(_safe_json(resp))
+                raise classify_http(resp.status_code, payload, resp.headers, where="embed")
+            # Some routers answer HTTP 200 with {"error": {...}} when the upstream model failed: classify it, don't call it "unexpected".
+            inner = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(inner, dict):
+                code = inner.get("code")
+                status = code if isinstance(code, int) and not isinstance(code, bool) and 400 <= code < 600 else 502
+                err = classify_http(status, payload, resp.headers, where="embed")
+                if err.diagnostics is not None:
+                    err.diagnostics["wrapped_in_http_200"] = True
+                raise err
+            return _measure(payload)
 
         return await with_retries(once, lambda e: self.normalize_error(e, where="embed"))
 

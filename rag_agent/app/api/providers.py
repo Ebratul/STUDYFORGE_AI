@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, SecretStr
 
 from app.logging import request_id_var
@@ -52,3 +52,19 @@ async def validate_provider(body: ValidateBody, request: Request) -> dict:
     with bind_secrets([body.api_key.get_secret_value()]):
         res = await validate_connection(provider, body, request.app.state.settings, request_id_var.get(None))
     return res.to_wire()
+
+
+@router.get("/{provider_id}/public-models")
+async def public_models(provider_id: str, request: Request, kind: str = Query("chat", pattern="^(chat|embedding)$")) -> dict:
+    """Keyless suggestions from the provider's PUBLIC model listing (no API key is sent or needed). Manual entry always stays possible;
+    `available: false` means this provider publishes no listing."""
+    provider = request.app.state.registry.get(provider_id)
+    fn = getattr(provider, "public_models", None)
+    models = await fn(kind) if fn is not None else None
+    return {
+        "provider": provider_id,
+        "kind": kind,
+        "available": models is not None,
+        "fetched_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "models": models or [],
+    }

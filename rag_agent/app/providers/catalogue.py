@@ -74,8 +74,8 @@ PROVIDERS: dict[str, ProviderMeta] = {
         embeddings=True,
         structured_output="model-dependent",
         embedding_dimensions_note=(
-            "text-embedding-3-small is natively 1536-d; text-embedding-3-large is 3072-d by default and is requested with "
-            "dimensions=1536. StudyForge stores vector(1536)."
+            "The vector length is yours to choose: leave it automatic to use the model's native size, or enter a smaller size for models "
+            "that accept the `dimensions` parameter (for example text-embedding-3-small/large). The size is verified with a live request."
         ),
     ),
     "openrouter": ProviderMeta(
@@ -88,8 +88,8 @@ PROVIDERS: dict[str, ProviderMeta] = {
         embeddings=True,
         structured_output="model-dependent",
         embedding_dimensions_note=(
-            "Embedding models vary; only models that return 1536-d vectors (e.g. openai/text-embedding-3-small) can be used. "
-            "Models are flagged compatible/incompatible/unknown; dimensions are verified at ingestion time."
+            "Embedding models vary in output size. Leave the dimension automatic to use the model's native size, or enter a smaller size "
+            "if the model accepts the `dimensions` parameter. Support is verified with a live request, never assumed."
         ),
     ),
     "groq": ProviderMeta(
@@ -114,7 +114,7 @@ MOCK_META = ProviderMeta(
     chat=True,
     embeddings=True,
     structured_output="model-dependent",
-    embedding_dimensions_note="Deterministic 1536-d hashing embeddings.",
+    embedding_dimensions_note="Deterministic hashing embeddings (test/demo only); mock-embed is 1536-d, mock-embed-<N> is N-d.",
 )
 
 # --------------------------------------------------------------------------------------------------
@@ -135,36 +135,6 @@ OPENAI_NO_SAMPLING_PARAMS = re.compile(r"^(o\d|gpt-5)")
 
 GROQ_NON_CHAT = re.compile(r"(whisper|orpheus|tts|playai|prompt-guard|guard|distil-whisper)", re.I)
 GROQ_STRUCTURED_YES = re.compile(r"^openai/gpt-oss-(20b|120b)$")
-
-# Embedding output sizes that are known (model-card knowledge, UNVERIFIED against the provider) not to be 1536.
-INCOMPATIBLE_EMBEDDING_HINTS = re.compile(
-    r"(bge-|minilm|e5-|gte-|mxbai|nomic-embed|snowflake-arctic-embed|voyage|embed-english|embed-multilingual|jina|multilingual-e5)", re.I
-)
-
-
-def openai_embedding_compat(model_id: str) -> str:
-    if re.match(r"^text-embedding-3-(small|large)", model_id):
-        return "compatible"  # small native 1536; large via dimensions=1536
-    if model_id == "text-embedding-ada-002":
-        return "compatible"  # 1536-d (long-standing; not restated on the pages fetched) -- verified at runtime anyway
-    return "unknown"
-
-
-def openrouter_embedding_compat(model_id: str) -> str:
-    if re.match(r"^openai/text-embedding-3-(small|large)", model_id) or model_id.endswith("text-embedding-ada-002"):
-        return "compatible"
-    if INCOMPATIBLE_EMBEDDING_HINTS.search(model_id):
-        return "incompatible"
-    return "unknown"
-
-
-def wants_dimensions_param(provider: str, model_id: str) -> bool:
-    """Only send `dimensions` where documented/known to be accepted (OpenAI text-embedding-3-*, same ids via OpenRouter)."""
-    if provider == "openai":
-        return model_id.startswith("text-embedding-3")
-    if provider == "openrouter":
-        return bool(re.match(r"^openai/text-embedding-3", model_id))
-    return False
 
 
 def openai_no_sampling(model_id: str) -> bool:
@@ -196,7 +166,6 @@ def parse_openai_models(payload: dict) -> list[ModelInfo]:
                     context_length=8192,  # per-input limit documented for all embedding models
                     capabilities=_caps(chat=False, embeddings=True, structured="no", tools="no"),
                     capability_source="catalogue",
-                    embedding_dimensions=openai_embedding_compat(mid),  # type: ignore[arg-type]
                 )
             )
             continue
@@ -262,7 +231,6 @@ def parse_openrouter_models(payload: dict, *, embeddings_listing: bool = False) 
                     context_length=ctx,
                     capabilities=_caps(chat=False, embeddings=True, structured="no", tools="no"),
                     capability_source="api",
-                    embedding_dimensions=openrouter_embedding_compat(mid),  # type: ignore[arg-type]
                 )
             )
             continue

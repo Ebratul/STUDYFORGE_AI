@@ -104,7 +104,7 @@ async def test_general_tolerates_retrieval_failure(db, world):
     a = world
     emb = FakeProvider("openai", embed_error=AppError(ErrorCode.PROVIDER_RATE_LIMITED))
     fake = FakeProvider(stream_script=[["still answers"]])
-    ev = await run(db, fake, gen_body(docs=[a], embedding={"provider": "openai", "api_key": CANARY_KEY, "model": "m"}),
+    ev = await run(db, fake, gen_body(docs=[a], embedding={"provider": "openai", "api_key": CANARY_KEY, "model": "m", "dimension": 1536}),
                    registry_extra=[emb])
     assert get(ev, "meta")[0]["retrieval"] == "unavailable"
     assert get(ev, "final")[0]["content"] == "still answers" and "error" not in names(ev)

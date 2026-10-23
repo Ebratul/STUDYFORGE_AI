@@ -34,7 +34,7 @@ Everything here is normative. If implementation reveals a needed change, keep th
 Codes → HTTP: `VALIDATION`→422, `SERVICE_UNAUTHORIZED`→401, `PROVIDER_AUTH_INVALID`→502, `PROVIDER_RATE_LIMITED`→429,
 `PROVIDER_TIMEOUT`→504, `PROVIDER_UNAVAILABLE`→502, `MODEL_NOT_FOUND`→502, `CONTEXT_TOO_LONG`→502,
 `CAPABILITY_UNSUPPORTED`→422, `CONTENT_FILTERED`→502, `QUOTA_EXCEEDED`(provider billing/quota)→502, `PROVIDER_ERROR`→502,
-`EMBEDDING_DIMENSION_MISMATCH`→422, `INTERNAL`→500. `message` is always safe to show a user (no key, no upstream body dump).
+`EMBEDDING_DIMENSION_MISMATCH`→422, `EMBEDDING_DIMENSION_UNSUPPORTED`→422, `INTERNAL`→500. `message` is always safe to show a user (no key, no upstream body dump).
 In streams the same object is sent as an `error` event.
 
 ## 1. Providers
@@ -72,7 +72,7 @@ Body `{"provider":"openrouter","api_key":"…"}` →
 * Merge the provider's `/models` payload with catalogue rules. OpenRouter returns `supported_parameters`/architecture — use it
   (`capability_source:"api"`). OpenAI/Groq return little — use catalogue rules, else `"unknown"` with source `"unverified"`.
 * Separate chat vs embedding models (embedding ids are returned for providers that have them, `capabilities.embeddings=true`).
-  A model whose embeddings output cannot be 1536-d must be flagged `"embedding_dimensions":"incompatible"` (we store `vector(1536)`).
+  Model lists make **no judgement about vector sizes** (the old `embedding_dimensions: compatible|incompatible|unknown` flag is gone): the size is measured by `POST /v1/providers/validate` (§11).
 * Sort by id. Cap at 500 models.
 
 ### 1.4 Adapter interface (Python)
@@ -84,7 +84,7 @@ class Provider(Protocol):
     async def generate(self, req: ChatRequest) -> ChatResult: ...            # text (+ usage)
     def stream(self, req: ChatRequest) -> AsyncIterator[ChatChunk]: ...      # deltas, final usage
     async def generate_structured(self, req: ChatRequest, schema: type[BaseModel]) -> StructuredResult: ...
-    async def embed(self, req: EmbedRequest) -> EmbedResult: ...              # list[list[float]] length 1536 each
+    async def embed(self, req: EmbedRequest) -> EmbedResult: ...              # list[list[float]]; each exactly req.expected_dimension long
     def normalize_error(self, exc: Exception) -> ProviderError: ...
 ```
 * `generate_structured`: if the model's `structured_output` is `yes` use native (`with_structured_output`/`response_format`);
@@ -96,15 +96,17 @@ class Provider(Protocol):
 * Timeouts: connect 10 s; non-stream total `PROVIDER_TIMEOUT_SECONDS` (default 60); stream: per-chunk idle timeout 60 s.
 * Usage: return `prompt_tokens`/`completion_tokens`/`total_tokens` when the provider reports them, else `null` (never invent).
   For streams request usage (`stream_options={"include_usage":true}`) where supported.
-* Embeddings: batch (≤ 64 inputs / request), `dimensions=1536` where the model supports it (OpenAI `text-embedding-3-*`),
-  verify each vector has exactly `EMBEDDING_DIMENSIONS` (1536) floats else `EMBEDDING_DIMENSION_MISMATCH`. L2-normalised or not is
+* Embeddings: batch (≤ 64 inputs / request). `EmbedRequest.dimensions` is sent as the `dimensions` parameter **iff it is not null** (any model; the
+  caller verified support at validation time). `EmbedRequest.expected_dimension` is the strict output check: every vector must be a non-empty list of
+  finite numbers of exactly that length, else `EMBEDDING_DIMENSION_MISMATCH` (not retryable; nothing is ever padded or truncated). With no
+  expectation all vectors must still share one length (`app/providers/embedding.py: check_vectors`). Non-finite numbers ⇒ `PROVIDER_ERROR`. L2-normalised or not is
   fine (cosine is used). Providers without embeddings → `CAPABILITY_UNSUPPORTED`.
 
 ### 1.5 Mock provider (`mock`, test/dev only)
 Deterministic, no network:
 * `test`: `api_key == "mock-valid-key"` → ok; anything else → `PROVIDER_AUTH_INVALID`.
-* `list_models`: `mock-chat` (chat, streaming, structured_output yes), `mock-chat-plain` (structured_output no), `mock-embed` (embeddings).
-* `embed`: hashing bag-of-words → 1536-d, L2-normalised (lowercase, split on non-alphanumerics; identical text ⇒ identical vector;
+* `list_models`: `mock-chat` (chat, streaming, structured_output yes), `mock-chat-plain` (structured_output no), `mock-embed` (embeddings; more embedding ids in §11).
+* `embed`: hashing bag-of-words → N-d (`mock-embed`: 1536), L2-normalised (lowercase, split on non-alphanumerics; identical text ⇒ identical vector;
   overlapping words ⇒ higher cosine). Must make lexical retrieval work end-to-end.
 * chat/stream: echoes a deterministic reply. Special markers in the **last user message**: `[[rate-limit]]` → `PROVIDER_RATE_LIMITED`
   (retry_after 3), `[[fail]]` → `PROVIDER_UNAVAILABLE`, `[[slow]]` → streams ~1 token/150 ms for ~20 s (so a client can stop it),
@@ -121,12 +123,18 @@ Schema is created by `backend/prisma/migrations/*/migration.sql`. **Never create
 
 * `"Document"`: `id`, `ownerId`, `name`, `extension`, `mimeType`, `sizeBytes`, `sha256`, `storageKey`, `status`
   (`QUEUED|PROCESSING|READY|FAILED|NEEDS_OCR`), `statusCode`, `statusDetail`, `progress`, `pageCount`, `textLength`, `chunkCount`,
-  `embeddingProvider`, `embeddingModel`, **`processingVersion`** (int, the version retrieval reads), `createdAt`, `updatedAt`, `processedAt`.
+  `embeddingProvider`, `embeddingModel`, `embeddingDimension`, **`processingVersion`** (int, the version retrieval reads), `createdAt`, `updatedAt`, `processedAt`.
 * `"DocumentChunk"`: `id` (text, you generate, e.g. uuid4 hex), `documentId`, `ownerId`, `chunkIndex`, `processingVersion`, `page` (nullable),
-  `section` (nullable), `content`, `tokenCount`, `embeddingModel`, `metadata` (jsonb), `embedding vector(1536)`,
-  `search tsvector` (GENERATED from content — never write it), `createdAt`.
-  Unique `(documentId, processingVersion, chunkIndex)`. A trigger rejects chunks whose `ownerId` ≠ the document's `ownerId`.
+  `section` (nullable), `content`, `tokenCount`, `embeddingProvider` (wire id, NOT NULL), `embeddingModel`, `embeddingDimension` (**GENERATED** from `vector_dims(embedding)` — never write it),
+  `metadata` (jsonb), `embedding vector` (no fixed length), `search tsvector` (GENERATED from content — never write it), `createdAt`.
+  Unique `(documentId, processingVersion, embeddingProvider, embeddingModel, embeddingDimension, chunkIndex)`: one document version can hold several
+  chunk sets at once, one per embedding **identity** (provider + model + dimension) — the active one and, during a re-index, a staged one. **Every read
+  names one identity.** A trigger rejects chunks whose `ownerId` ≠ the document's `ownerId`.
   FK `documentId → Document.id ON DELETE CASCADE` (the backend deletes documents; you never delete documents).
+* **Vector store (optional, `VECTOR_STORE=dual|pinecone`, see `backend/docs/VECTOR_STORE_SPEC.md`):** `"DocumentChunk"."pineconeIndexedAt"` (nullable) is
+  set when the chunk's vector was written to Pinecone and seen there; `embeddingDimension` is then a **plain column** (kept equal to the vector's length by a
+  trigger whenever a local vector exists, written explicitly otherwise). `id` is deterministic: `sha256(documentId, version, provider, model, dimension, chunkIndex)[:32]`.
+  In `pinecone` mode `embedding` may be NULL (unless `PINECONE_KEEP_POSTGRES_VECTORS=true`, the default).
 * The service uses `DATABASE_URL` (psycopg3 + `pgvector` adapter, async pool). In production this is a role limited to
   `SELECT` on `"Document"` (+ `UPDATE ("processingVersion")`) and `SELECT/INSERT/DELETE` on `"DocumentChunk"`. Code must only touch those two tables.
 * `"Document"."name"` is read for citations (`document_name`).
@@ -136,7 +144,7 @@ Schema is created by `backend/prisma/migrations/*/migration.sql`. **Never create
 Fields: `file` (the bytes) and `meta` (JSON string):
 ```json
 {"document_id":"…","owner_id":"…","filename":"notes.pdf","mime_type":"application/pdf","processing_version":3,
- "embedding":{"provider":"openai","api_key":"…","model":"text-embedding-3-small"}}
+ "embedding":{"provider":"openai","api_key":"…","model":"text-embedding-3-small","dimension":1536,"request_dimensions":null}}
 ```
 Response: `application/x-ndjson`, one JSON object per line, flushed as produced:
 ```
@@ -168,7 +176,11 @@ Rules:
   boundaries (include Bangla `।`); never split mid-word; PDF chunks never span pages (set `page`); other formats set `section` (nearest heading).
   `tokenCount` = approximation (chars/4) is fine. Drop empty/whitespace-only chunks. Deterministic output for identical input.
 * **Embedding**: batches via the embedding provider (§1.4); progress between 35 and 90; transient provider errors retried per §1.4;
-  everything fails atomically. Store `embeddingModel` = the model id used.
+  everything fails atomically. Embedding credentials are `{provider, api_key, model, dimension, request_dimensions?}` (`dimension` **required**, 8–4096;
+  `request_dimensions`, if present, must equal it — else 422). The `dimensions` parameter is sent iff `request_dimensions` is set and every vector must
+  be exactly `dimension` long (else `EMBEDDING_DIMENSION_MISMATCH`, nothing stored). Chunks are stored with `embeddingProvider`, `embeddingModel` (the
+  identity); a re-run deletes only its own identity at that version, and a successful newer version deletes every other version (all identities).
+  The same `embedding` shape is used by `chat` (§6) and `generate` bodies.
 * **Store atomically (single transaction)**: insert all chunks with `processingVersion = processing_version`; delete chunks of *other* versions for this
   document; `UPDATE "Document" SET "processingVersion" = <new>`. If anything fails, the old chunk set and version stay untouched. Re-running the same
   `(document_id, processing_version)` must be idempotent (delete-then-insert that version inside the transaction). Never leave partial chunks.
@@ -184,7 +196,7 @@ Request:
  "user_id":"…",
  "mode":"GENERAL" | "DOCUMENT_ONLY",
  "chat":     {"provider":"groq","api_key":"…","model":"…","params":{"temperature":0.3,"top_p":null,"max_output_tokens":1024}},
- "embedding":{"provider":"openai","api_key":"…","model":"text-embedding-3-small"} | null,
+ "embedding":{"provider":"openai","api_key":"…","model":"text-embedding-3-small","dimension":1536,"request_dimensions":null} | null,
  "messages": [{"role":"user"|"assistant","content":"…"}],
  "document_ids": ["…"],
  "use_documents": true,
@@ -247,10 +259,14 @@ Nodes: `validate → retrieve → gate → generate → verify → (repair once)
 
 ## 5. Retrieval (`app/retrieval/`)
 
-`search_chunks(conn, *, owner_id, document_ids, query_embedding, query_text, embedding_model, top_k, min_similarity)`:
+`search_chunks(conn, *, owner_id, document_ids, query_embedding, query_text, embedding_provider, embedding_model, embedding_dimension, top_k, min_similarity)`:
 * **One SQL query path** (parameterised, no string interpolation of user data). Every query includes
   `c."ownerId" = :owner AND d."ownerId" = :owner AND c."documentId" = ANY(:doc_ids) AND c."processingVersion" = d."processingVersion"
-   AND d.status = 'READY' AND c."embeddingModel" = :embedding_model`. If `document_ids` is empty → empty result without querying.
+   AND d.status = 'READY' AND c."embeddingProvider" = :embedding_provider AND c."embeddingModel" = :embedding_model
+   AND c."embeddingDimension" = :dim AND vector_dims(c."embedding") = :dim`, evaluated in a `MATERIALIZED` CTE **before** any distance operator, so vectors of
+   different lengths are never compared (pgvector would raise). `len(query_embedding)` must equal `embedding_dimension` (else `EMBEDDING_DIMENSION_MISMATCH`).
+   If `document_ids` is empty → empty result without querying. Full-document context (`generation/sources.py: sample_chunks`) needs no query vector and reads the
+   identity recorded on the `"Document"` row (`embeddingModel`, `embeddingDimension` (null ⇒ 1536, the legacy size), `embeddingProvider` (null ⇒ any)), so a staged set never duplicates passages.
 * **Hybrid**: vector top-N by cosine (`1 - (embedding <=> :q)`) ∪ keyword top-N by `ts_rank` over `search` with `plainto_tsquery('simple', :text)`;
   fuse with Reciprocal Rank Fusion (k=60); return up to `top_k` chunks with `similarity` = the **cosine similarity** (needed for the gate; keyword-only
   hits have similarity computed from the vector too — compute cosine for all returned rows). Then bound total context to `max_context_chars`
@@ -279,7 +295,7 @@ Test DB: create/use database `studyforge_rag_test` on the local Postgres (`postg
 and build its schema by executing `../backend/prisma/migrations/*/migration.sql` in order (drop+recreate the `public` schema at session start). Never touch other databases.
 
 ## 8. Environment (`rag_agent/.env.example` with placeholders only)
-`APP_ENV` (development|test|production), `HOST`, `PORT`, `DATABASE_URL`, `RAG_AGENT_TOKEN`, `ALLOW_MOCK_PROVIDER`, `EMBEDDING_DIMENSIONS`(=1536),
+`APP_ENV` (development|test|production), `HOST`, `PORT`, `DATABASE_URL`, `RAG_AGENT_TOKEN`, `ALLOW_MOCK_PROVIDER`,
 `MAX_UPLOAD_BYTES`, `MAX_PAGES`, `MAX_TEXT_CHARS`, `PARSE_TIMEOUT_SECONDS`, `CHUNK_TARGET_CHARS`, `CHUNK_OVERLAP_CHARS`, `PROVIDER_TIMEOUT_SECONDS`, `MAX_CHAT_CHARS`,
 `RETRIEVAL_TOP_K`, `RETRIEVAL_MIN_SIMILARITY`, `RETRIEVAL_MAX_CONTEXT_CHARS`, `MAX_CONCURRENT_INGESTS`, `OCR_ENABLED`, `LOG_LEVEL`,
 `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_INCLUDE_CONTENT`.
@@ -322,19 +338,66 @@ Two **JSON** (non-streaming) endpoints, bearer-protected:
 
 Normative text: `backend/docs/AI_CONNECTION_SPEC.md` §1. Implemented in `app/providers/validation.py`, route `POST /v1/providers/validate` (bearer-protected).
 
-Request: `{"provider","api_key","chat_model","embedding_model"}` (strict, no extra keys; model ids trimmed, 1–200 chars; unknown provider, and `mock` when it is disabled or `APP_ENV=production`, → 422 `VALIDATION`). Response (always 200 for a processed request):
+Request: `{"provider","api_key","chat_model","embedding_model","embedding_dimension"?,"chat_params"?}` (`embedding_dimension`: integer 8–4096 or null = the model's native size; strict, no extra keys; model ids trimmed, 1–200 chars; unknown provider, and `mock` when it is disabled or `APP_ENV=production`, → 422 `VALIDATION`). Response (always 200 for a processed request):
 
 ```json
-{"ok": false, "provider": "openrouter", "embedding_dimension": 3072,
+{"ok": false, "provider": "openrouter", "embedding_dimension": null,
  "checks": {"auth": {"ok": true, "latency_ms": 180},
            "chat": {"ok": false, "code": "MODEL_NOT_FOUND", "message": "…", "latency_ms": 90},
-           "embedding": {"ok": false, "code": "EMBEDDING_DIMENSION_MISMATCH", "message": "This model produces 3072-dimensional vectors; StudyForge stores 1536-dimensional vectors. …", "latency_ms": 210, "dimension": 3072}}}
+           "embedding": {"ok": false, "code": "EMBEDDING_DIMENSION_MISMATCH", "message": "This model returned 3072-dimensional vectors when asked for 1536, so it does not support that size. …", "latency_ms": 210, "dimension": 3072, "native_dimension": 3072}}}
 ```
 
 * **Order:** `auth` (authenticated call: OpenRouter `GET /key` + `GET /models`; OpenAI/Groq `GET /models`) → `chat` → `embedding`. If `auth` fails the other two are `{"ok": null, "skipped": true}` and **no paid call is made**. `chat` and `embedding` run independently of each other. `ok` is true only when all three are true.
 * **chat:** one non-streaming completion, `temperature=0`, `max_output_tokens=8` (sent as `max_tokens` for OpenRouter, `max_completion_tokens` for OpenAI/Groq), prompt `Reply with OK.`; any completed response counts (even empty text with a normal finish).
-* **embedding:** one `POST /embeddings` for `["StudyForge connection test"]` with `encoding_format=float` and `dimensions=1536` only where `catalogue.wants_dimensions_param` says so (OpenAI `text-embedding-3-*`, OpenRouter `openai/text-embedding-3-*`). `Provider.probe_embedding` returns the **measured** length of the single returned vector and requires exactly one non-empty vector of finite numbers (NaN/inf, base64 strings, extra/missing items ⇒ `PROVIDER_ERROR`). A length ≠ `EMBEDDING_DIMENSIONS` (1536) ⇒ `EMBEDDING_DIMENSION_MISMATCH` with the measured number in the message, `dimension` in the check and `embedding_dimension` at the top level. `embed()` (ingestion/retrieval) is unchanged and stays strict. Providers without embeddings (Groq) ⇒ `CAPABILITY_UNSUPPORTED` without any HTTP call.
+* **embedding** (`embedding_dimension` = *N*, optional): (1) one `POST /embeddings` for `["StudyForge connection test"]` with `encoding_format=float` and **no** `dimensions` → the **native** size *D0* (`Provider.probe_embedding` requires exactly one non-empty vector of finite numbers; NaN/inf, base64 strings, extra/missing items ⇒ `PROVIDER_ERROR`). (2) *N* absent or `== D0` ⇒ ok, `dimension = D0`, `request_dimensions` omitted (no parameter is ever sent). (3) Otherwise a second probe with `dimensions=N`; the measured length must be exactly *N* ⇒ ok, `dimension = N`, `request_dimensions = N`. A different length (parameter ignored or not honoured) ⇒ `EMBEDDING_DIMENSION_MISMATCH` (`dimension` = the returned length, message names it, *N* and *D0*); a provider that rejects the parameter (any failure of this probe other than auth / rate-limit / quota / timeout / unavailable, which keep their own codes) ⇒ `EMBEDDING_DIMENSION_UNSUPPORTED`. Nothing is padded or truncated and no model list is trusted. Check fields: `dimension`, `native_dimension` (whenever the native probe succeeded), `request_dimensions`. Top-level `embedding_dimension` is the **verified** dimension, `null` when the embedding check did not pass. Request count: one, or two when *N ≠ D0*. Providers without embeddings (Groq) ⇒ `CAPABILITY_UNSUPPORTED` without any HTTP call.
 * **Timeouts/retries:** each check ≤ 20 s (`asyncio.timeout`), plus the adapters' existing bounded retries (≤ 2, only 429/5xx/timeouts). Redirects are never followed (the `Authorization` header cannot leave the provider host).
 * **Errors:** the normalised codes of §0 (`PROVIDER_AUTH_INVALID`, `PROVIDER_RATE_LIMITED`, `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `MODEL_NOT_FOUND`, `QUOTA_EXCEEDED` (402/credits), `CONTENT_FILTERED`, `PROVIDER_ERROR`) with fixed safe messages; upstream bodies, URLs and the key are never copied; secrets are bound for redaction for the whole call. Logs: one `validate_done` event with booleans/dimension only.
-* **Mock provider** (tests/dev only): key `mock-valid-key`; chat ids `mock-chat*` ok, other ids `MODEL_NOT_FOUND`; embedding `mock-embed` (1536), `mock-embed-3072` (dimension mismatch), `mock-embed-nan` (non-finite ⇒ `PROVIDER_ERROR`), other ids `MODEL_NOT_FOUND`.
+* **Mock provider** (tests/dev only): key `mock-valid-key`; chat ids `mock-chat*` ok, other ids `MODEL_NOT_FOUND`; embedding ids must start with `mock-embed` (else `MODEL_NOT_FOUND`): `mock-embed` native 1536, `mock-embed-<N>` native *N* (8–4096; `mock-embed-3072`, `mock-embed-2048`, …), `mock-embed-flex` native 1024 and honours `dimensions` 8–1024, `mock-embed-ignore` native 768 and silently ignores `dimensions`, `mock-embed-strict` native 1536 and rejects `dimensions`, `mock-embed-nan` (non-finite ⇒ `PROVIDER_ERROR`). Plain and `<N>` models ignore `dimensions`.
 * **Ingest (§3):** the final `result` event carries `embedding_dimension` = the verified length of the vectors that were stored (null when nothing was embedded).
+* **Error codes:** `EMBEDDING_DIMENSION_MISMATCH` (422; a vector's length differs from what was asked for/configured) and `EMBEDDING_DIMENSION_UNSUPPORTED` (422; the provider rejects the `dimensions` parameter for this model).
+
+### 11.2 `POST /v1/reindex` (staged re-index of one document)
+Bearer-protected, JSON. Re-embeds the document's **stored chunk texts** (no re-parse) under a new identity and stores them as a second chunk set; the source set is only read.
+```json
+{"document_id":"…","owner_id":"…","processing_version":3,
+ "source":{"provider":"openai","model":"text-embedding-3-small","dimension":1536},
+ "target":{"provider":"openrouter","api_key":"…","model":"vendor/embed","dimension":1024,"request_dimensions":1024}}
+```
+→ `200 {"type":"result","status":"READY"|"STALE","chunk_count":31,"embedding_dimension":1024}`. `STALE` (nothing written): the document is not `READY`, its `processingVersion` ≠ `processing_version`, the source set is empty, or the source chunk ids changed while embedding. Errors use the normal envelope: 422 `VALIDATION` (unknown/foreign document, source = target identity, bad body, disabled provider), `BUSY` 429 (shares `MAX_CONCURRENT_INGESTS` with ingest), the normalised provider codes (e.g. `PROVIDER_AUTH_INVALID`, retryable ones carry `retryable: true`), `EMBEDDING_DIMENSION_MISMATCH`, `INTERNAL` (database failure). One transaction: lock the `Document` row `FOR UPDATE`, re-check version/source, delete the target identity's rows for that version (idempotent), insert the copies (new ids, same `chunkIndex/page/section/content/tokenCount/metadata`), then verify inside the transaction `count == source count` and `vector_dims = dimension` for all — otherwise it rolls back and no partial target set remains. The API key is bound for redaction for the whole call. Switching users over to the new set is the backend's job.
+
+### 11.1 Generation parameters, parameter check, diagnostics, public models (Increment 1 of the AI-settings upgrade)
+* **Parameters.** `Params` (chat / generate / analyze requests) = `temperature` 0–2, `top_p` 0–1, `max_output_tokens` 1–32768, plus `frequency_penalty` −2–2, `presence_penalty` −2–2, `seed` 0–2³¹−1. A key that is absent/`null` is **not sent** to the provider (the backend only includes what the user set). Penalties/seed are skipped for models whose sampling is dropped (`drop_sampling`).
+* **`POST /v1/providers/validate`** gains optional `chat_params` (same shape, `extra=forbid`) and a fourth check `chat_params` (order: auth → chat → chat_params → embedding). With no custom parameters it is `{ ok: null, skipped: true, message }` and **no extra request is made**. Otherwise: (1) if the provider publishes per-model metadata (OpenRouter `supported_parameters`) and a requested parameter is not listed → `PARAMETER_UNSUPPORTED` with `unsupported: [wire names]`, **no paid call**; (2) else one tiny request (`max_tokens` ≤ 8) carrying the parameters and, on OpenRouter, `provider.require_parameters = true` so a router that would silently drop them refuses instead (a 404 "no endpoints" there is reported as `PARAMETER_UNSUPPORTED`, not `MODEL_NOT_FOUND`). `ok: true` carries `verified: [wire names]`. Metadata is a hint only: a model id that answers does not prove parameter support.
+* **Diagnostics.** Every failed check may carry `diagnostics` = `{ endpoint, http_status, upstream_code?, upstream_type?, upstream_provider?, failure?, wrapped_in_http_200?, source? }`: short allow-listed tokens (≤ 64 chars, scrubbed). Upstream messages, bodies, headers, URLs, prompts and keys are never copied. Failures are also logged (`validate_check_failed`, WARNING, with `request_id`, `check`, `code`, `model` and the diagnostics). An HTTP-200 response whose body is `{"error": …}` is classified by that error, not reported as "unexpected response".
+* **`GET /v1/providers/{provider}/public-models?kind=chat|embedding`** → `{ provider, kind, available, fetched_at, models: [{ id, name, context_length, free, supported_parameters | null }] }`. Keyless (no `Authorization` header is sent upstream), cached 10 minutes, parameter names restricted to `[a-z][a-z0-9_]*`. `available: false` for providers without a public listing. Used only for optional suggestions and hints; manual model ids are never restricted.
+
+## 12. Vector store (optional Pinecone; `VECTOR_STORE=pgvector|dual|pinecone`, default `pgvector`)
+
+Everything below is **additive**: in `pgvector` mode no request or response changes (the ingest result gains no fields).
+
+### 12.1 Changed results
+* `POST /v1/ingest` result (dual / pinecone only) additionally carries `superseded: [{identity:{provider,model,dimension}, chunks:[[documentId, chunkId], …]}]`
+  (the previous version's vectors, whose PostgreSQL rows were just deleted) and `superseded_truncated` (more than 5000 were replaced; the rest are stale-version
+  vectors for the reconcile tool). The backend turns them into retried delete jobs in the same transaction that marks the document READY.
+* Before any extraction or embedding, a size the Pinecone index cannot hold ends the stream with `error` `VECTOR_DIMENSION_UNSUPPORTED` (not retryable). `POST /v1/reindex` raises the same error.
+
+### 12.2 New error codes
+`VECTOR_STORE_UNAVAILABLE` (503, retryable), `VECTOR_STORE_RATE_LIMITED` (429, retryable, `retry_after_seconds`), `VECTOR_STORE_AUTH` (502), `VECTOR_STORE_ERROR` (502),
+`VECTOR_DIMENSION_UNSUPPORTED` (422), `VECTOR_STORE_SCHEMA_NOT_READY` (503; the vector-store migration is missing). Messages are fixed and never contain upstream text, hosts or keys.
+
+### 12.3 `GET /v1/vectors/status` → `{ "mode": "pgvector|dual|pinecone", "dimensions": [1536] | null }`
+Never contains hosts, index names or keys. The backend uses it to detect a mode mismatch and to refuse unsupported sizes in the connection form.
+
+### 12.4 `POST /v1/vectors/delete` (service token; idempotent; `noop` in pgvector mode)
+```jsonc
+{ "scope": "document", "owner_id": "…", "document_id": "…" }                       // every vector of one document
+{ "scope": "user",     "owner_id": "…", "document_ids": ["…"] }                    // a user's namespace (shared namespaces: document by document)
+{ "scope": "chunks",   "owner_id": "…", "identity": {"provider","model","dimension"}, "chunks": [["documentId","chunkId"], …≤1000] }
+```
+Response `{ "status": "ok"|"noop", "mode": "…", "deleted": n }`. Ids must match `[A-Za-z0-9_-]{1,200}` (422 otherwise). The caller can never name a namespace, filter or
+index; unknown fields are ignored. `chunks` removes only vectors whose metadata says they belong to that owner and identity.
+
+### 12.5 Operator tools (`rag_agent/`, run by hand, dry run by default where they write)
+`python -m app.tools.backfill_pinecone` · `python -m app.tools.reconcile_pinecone` · `python -m app.tools.pinecone_check` (read-only). They contact Pinecone only when an
+operator runs them (a backfill dry run contacts nothing). The service itself never creates, alters or discovers an index.
+

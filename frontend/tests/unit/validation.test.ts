@@ -36,6 +36,10 @@ describe("safeNextPath (open-redirect guard)", () => {
   it.each([
     ["/dashboard", "/dashboard"], ["/settings/profile?tab=1", "/settings/profile?tab=1"], ["//evil.com", "/workspace"], ["https://evil.com", "/workspace"],
     ["/\\evil.com", "/workspace"], ["javascript:alert(1)", "/workspace"], ["/login", "/workspace"], [null, "/workspace"], ["", "/workspace"],
+    // Browsers delete tabs/newlines while parsing URLs, so these would otherwise become "//evil.com".
+    ["/\t/evil.com", "/workspace"], ["/\n/evil.com", "/workspace"], ["/\r/evil.com", "/workspace"], ["/ /evil.com", "/workspace"], ["/\u0000/evil.com", "/workspace"],
+    ["/\u2028/evil.com", "/workspace"], ["/%2F/evil.com", "/%2F/evil.com"], ["/login?next=/x", "/workspace"], ["/register", "/workspace"], ["/exams/abc?x=1#top", "/exams/abc?x=1#top"],
+    ["x".repeat(3000), "/workspace"], ["/" + "a".repeat(3000), "/workspace"], ["http://localhost:3000/exams", "/workspace"],
   ])("%s -> %s", (input, expected) => {
     expect(safeNextPath(input as string | null)).toBe(expected);
   });

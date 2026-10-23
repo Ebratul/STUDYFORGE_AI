@@ -31,7 +31,7 @@ def chat_payload(mode="GENERAL", text="hello there", docs=(), provider="mock", k
     p = {
         "request_id": "req-1", "user_id": "alice", "mode": mode,
         "chat": {"provider": provider, "api_key": key, "model": "mock-chat", "params": {"temperature": 0.3, "top_p": None, "max_output_tokens": 256}},
-        "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed"} if emb else None,
+        "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed", "dimension": 1536} if emb else None,
         "messages": [{"role": "user", "content": text}], "document_ids": list(docs), "use_documents": True,
         "retrieval": {"top_k": 6, "min_similarity": 0.3, "max_context_chars": 12000},
     }
@@ -207,7 +207,7 @@ async def test_end_to_end_ingest_then_document_only_chat_with_mock(client, db):
     text = ("Mitochondria are organelles that produce ATP through oxidative phosphorylation.\n\n"
             "Ribosomes translate messenger RNA into proteins inside the cell.")
     meta = {"document_id": "doc-1", "owner_id": "alice", "filename": "Cell Biology.txt", "mime_type": "text/plain", "processing_version": 1,
-            "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed"}}
+            "embedding": {"provider": "mock", "api_key": VALID_KEY, "model": "mock-embed", "dimension": 1536}}
     r = await client.post("/v1/ingest", data={"meta": json.dumps(meta)}, files={"file": ("Cell Biology.txt", text.encode(), "text/plain")})
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/x-ndjson")
     lines = [json.loads(x) for x in r.text.strip().split("\n")]
@@ -249,7 +249,7 @@ async def test_end_to_end_ingest_then_document_only_chat_with_mock(client, db):
 # ------------------------------------------------------------------------------------------------ ingest endpoint
 def ingest_meta(doc="doc-x", owner="alice", filename="a.txt", version=1, provider="mock", key=VALID_KEY, model="mock-embed"):
     return json.dumps({"document_id": doc, "owner_id": owner, "filename": filename, "processing_version": version,
-                       "embedding": {"provider": provider, "api_key": key, "model": model}})
+                       "embedding": {"provider": provider, "api_key": key, "model": model, "dimension": 1536}})
 
 
 async def test_ingest_validation_errors_are_plain_4xx(client, db):

@@ -16,9 +16,13 @@ async function api(page: Page, method: string, path: string, body?: unknown) {
 }
 
 async function configureAi(page: Page, opts: { embedding?: boolean } = {}) {
-  expect((await api(page, "PUT", "/api/ai/credentials/mock", { apiKey: VALID_KEY })).ok()).toBe(true);
-  const prefs = { default: { provider: "mock", modelId: "mock-chat" }, tasks: opts.embedding === false ? {} : { EMBEDDING: { provider: "mock", modelId: "mock-embed" } } };
-  expect((await api(page, "PUT", "/api/ai/preferences", prefs)).ok()).toBe(true);
+  if (opts.embedding === false) {
+    // chat only: the embedding model can only be set through the verified connection flow
+    expect((await api(page, "PUT", "/api/ai/credentials/mock", { apiKey: VALID_KEY })).ok()).toBe(true);
+    expect((await api(page, "PUT", "/api/ai/preferences", { default: { provider: "mock", modelId: "mock-chat" }, tasks: {} })).ok()).toBe(true);
+    return;
+  }
+  expect((await api(page, "PUT", "/api/ai/connection", { apiKey: VALID_KEY, chatModelId: "mock-chat", embeddingModelId: "mock-embed" })).ok()).toBe(true);
 }
 
 async function uploadText(page: Page, name: string, text: string) {
@@ -108,7 +112,7 @@ test.describe("documents", () => {
     await expect(row.locator("[data-status]")).toHaveAttribute("data-status", "FAILED", { timeout: 30_000 });
     await expect(row).toContainText("Choose an embedding model in Settings");
 
-    expect((await api(page, "PUT", "/api/ai/preferences", { tasks: { EMBEDDING: { provider: "mock", modelId: "mock-embed" } } })).ok()).toBe(true);
+    expect((await api(page, "PUT", "/api/ai/connection", { apiKey: VALID_KEY, chatModelId: "mock-chat", embeddingModelId: "mock-embed" })).ok()).toBe(true);
     await page.reload();
     await page.getByTestId("doc-notes.txt").getByRole("button", { name: /Retry notes.txt/ }).click();
     await expect(page.getByTestId("doc-notes.txt").locator("[data-status]")).toHaveAttribute("data-status", "READY", { timeout: 30_000 });

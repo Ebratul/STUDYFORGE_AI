@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from app.config import MAX_EMBEDDING_DIMENSION, MIN_EMBEDDING_DIMENSION
 from app.providers.base import ChatParams
 
 
@@ -13,9 +14,19 @@ class Params(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, ge=0, le=1)
     max_output_tokens: int | None = Field(default=None, ge=1, le=32768)
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
 
     def to_chat_params(self) -> ChatParams:
-        return ChatParams(temperature=self.temperature, top_p=self.top_p, max_output_tokens=self.max_output_tokens)
+        return ChatParams(
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_output_tokens=self.max_output_tokens,
+            frequency_penalty=self.frequency_penalty,
+            presence_penalty=self.presence_penalty,
+            seed=self.seed,
+        )
 
 
 class ChatConfig(BaseModel):
@@ -25,10 +36,26 @@ class ChatConfig(BaseModel):
     params: Params = Field(default_factory=lambda: Params())
 
 
-class EmbeddingConfigIn(BaseModel):
+class EmbeddingIdentityIn(BaseModel):
+    """provider + model + dimension: two vectors are comparable only when all three are equal."""
+
     provider: str = Field(min_length=1, max_length=32)
-    api_key: SecretStr
     model: str = Field(min_length=1, max_length=200)
+    dimension: int = Field(ge=MIN_EMBEDDING_DIMENSION, le=MAX_EMBEDDING_DIMENSION)
+
+
+class EmbeddingConfigIn(EmbeddingIdentityIn):
+    """Embedding credentials + the dimension the caller expects. The dimension is required: it is never assumed or defaulted."""
+
+    api_key: SecretStr
+    # The `dimensions` request parameter to send (verified at validation time); None = send nothing. When set it must equal `dimension`.
+    request_dimensions: int | None = Field(default=None, ge=MIN_EMBEDDING_DIMENSION, le=MAX_EMBEDDING_DIMENSION)
+
+    @model_validator(mode="after")
+    def _request_matches(self) -> "EmbeddingConfigIn":
+        if self.request_dimensions is not None and self.request_dimensions != self.dimension:
+            raise ValueError("request_dimensions must equal dimension")
+        return self
 
 
 class Msg(BaseModel):

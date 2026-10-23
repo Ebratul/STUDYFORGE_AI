@@ -162,7 +162,7 @@ async def test_openai_embeddings_batches_of_64_and_dimensions(settings):
 
     with respx.mock as m:
         route = m.post(BASES["openai"] + "/embeddings").mock(side_effect=handler)
-        res = await p.embed(EmbedRequest("text-embedding-3-large", KEY, [f"t{i}" for i in range(130)]))
+        res = await p.embed(EmbedRequest("text-embedding-3-large", KEY, [f"t{i}" for i in range(130)], dimensions=1536, expected_dimension=1536))
     assert sizes == [64, 64, 2] and route.call_count == 3
     assert len(res.vectors) == 130 and all(len(v) == 1536 for v in res.vectors)
     # order is preserved: first vector of each batch carries the 0.01 marker
@@ -181,7 +181,7 @@ async def test_openrouter_embeddings(settings):
     p = OpenRouterProvider(settings)
     with respx.mock as m:
         route = m.post(BASES["openrouter"] + "/embeddings").mock(return_value=httpx.Response(200, json=embed_json(2)))
-        res = await p.embed(EmbedRequest("openai/text-embedding-3-small", KEY, ["a", "b"]))
+        res = await p.embed(EmbedRequest("openai/text-embedding-3-small", KEY, ["a", "b"], dimensions=1536, expected_dimension=1536))
     assert len(res.vectors) == 2
     sent = route.calls.last.request
     assert sent.headers["x-title"] == "StudyForge AI" and sent.url.host == "openrouter.ai"
@@ -201,7 +201,7 @@ async def test_embedding_dimension_mismatch(settings):
     with respx.mock as m:
         m.post(BASES["openai"] + "/embeddings").mock(return_value=httpx.Response(200, json=embed_json(1, dim=768)))
         with pytest.raises(ProviderError) as ei:
-            await p.embed(EmbedRequest("text-embedding-3-small", KEY, ["x"]))
+            await p.embed(EmbedRequest("text-embedding-3-small", KEY, ["x"], expected_dimension=1536))
     assert ei.value.code == ErrorCode.EMBEDDING_DIMENSION_MISMATCH and ei.value.http_status == 422
 
 

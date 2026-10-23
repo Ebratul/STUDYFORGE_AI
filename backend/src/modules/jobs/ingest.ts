@@ -3,12 +3,12 @@ import { recordProviderEvent } from "../../lib/metrics.js";
 import { RagAgentError } from "../../clients/rag-agent.js";
 import { db } from "../../lib/db.js";
 import { logger } from "../../lib/logger.js";
-import { DIMENSION_MISMATCH_MESSAGE, EXPECTED_DIMENSION } from "../ai/embedding-identity.js";
+import { DIMENSION_MISMATCH_MESSAGE, embeddingCredentials, LEGACY_DIMENSION } from "../ai/embedding-identity.js";
 import { getDecryptedKey, markCredentialInvalid } from "../ai/credentials.js";
 import { resolveModel } from "../ai/preferences.js";
-import { toWire } from "../ai/providers.js";
-import type { Storage } from "../documents/storage/types.js";
+import { StorageError, type Storage } from "../documents/storage/types.js";
 import { deleteStoredObject } from "../documents/service.js";
+import { queueSupersededVectors } from "../vectors/store.js";
 import type { Handlers } from "./worker.js";
 import { RetryableJobError } from "./queue.js";
 
@@ -22,7 +22,14 @@ const MESSAGES: Record<string, string> = {
   PROVIDER_UNAVAILABLE: "The embedding provider is unavailable right now. Retry in a moment.",
   UPSTREAM_UNAVAILABLE: "The document processing service is unavailable. Retry in a moment.",
   EMBEDDING_DIMENSION_MISMATCH: DIMENSION_MISMATCH_MESSAGE,
+  EMBEDDING_DIMENSION_UNSUPPORTED: DIMENSION_MISMATCH_MESSAGE,
   BUSY: "Document processing is busy. It will be retried automatically.",
+  VECTOR_DIMENSION_UNSUPPORTED: "This installation's document search index doesn't support this embedding size. Choose an embedding model or size it supports in Settings → AI connection, then retry.",
+  VECTOR_STORE_UNAVAILABLE: "The document search index is temporarily unavailable. Retry in a moment.",
+  VECTOR_STORE_RATE_LIMITED: "The document search index is busy. Retry in a moment.",
+  VECTOR_STORE_AUTH: "Document indexing is not configured correctly on the server. Contact the administrator, then retry.",
+  VECTOR_STORE_ERROR: "Document indexing is not configured correctly on the server. Contact the administrator, then retry.",
+  VECTOR_STORE_SCHEMA_NOT_READY: "Document indexing is not configured correctly on the server. Contact the administrator, then retry.",
 };
 
 async function failDocument(id: string, code: string, message?: string | null) {
@@ -60,6 +67,11 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
         bytes = await storage.get(doc.storageKey);
       } catch (err) {
         logger.error("ingest.storage_read_failed", { documentId: doc.id, err });
+        // Provider hiccups (rate limit, timeout, 5xx) are retried with the job's backoff instead of failing the document for good.
+        if (err instanceof StorageError && err.retryable && job.attempts < job.maxAttempts) {
+          await db.document.updateMany({ where: { id: doc.id }, data: { status: "QUEUED", progress: 0 } });
+          throw new RetryableJobError(`STORAGE_${err.code}`);
+        }
         return failDocument(doc.id, "STORAGE_ERROR", "The stored file could not be read. Please upload it again.");
       }
 
@@ -71,7 +83,7 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
             filename: doc.name,
             mime_type: doc.mimeType,
             processing_version: doc.processingVersion + 1,
-            embedding: { provider: toWire(embedding.provider), api_key: key, model: embedding.modelId },
+            embedding: embeddingCredentials(embedding, key),
           },
           bytes,
           (_stage, progress) => void db.document.updateMany({ where: { id: doc.id, status: "PROCESSING" }, data: { progress: Math.min(99, Math.max(0, progress)) } }).catch(() => undefined),
@@ -88,28 +100,32 @@ export function ingestHandlers(rag: RagAgentClient, storage: Storage): Handlers 
           return failDocument(doc.id, result.code, result.message);
         }
 
-        const measured = result.type === "result" ? (result.embedding_dimension ?? embedding.embeddingDimension ?? EXPECTED_DIMENSION) : EXPECTED_DIMENSION;
-        if (result.status === "READY" && measured !== EXPECTED_DIMENSION) {
-          // rag_agent already rejects other lengths; this keeps the invariant even if that contract ever changes.
-          return failDocument(doc.id, "EMBEDDING_DIMENSION_MISMATCH");
-        }
+        // rag_agent checks every vector against the dimension it was given; this keeps the invariant even if that contract ever changes.
+        const configured = embedding.embeddingDimension ?? LEGACY_DIMENSION;
+        const measured = result.type === "result" ? (result.embedding_dimension ?? configured) : configured;
+        if (result.status === "READY" && measured !== configured) return failDocument(doc.id, "EMBEDDING_DIMENSION_MISMATCH");
         if (result.status === "READY") {
-          await db.document.updateMany({
-            where: { id: doc.id },
-            data: {
-              status: "READY",
-              progress: 100,
-              statusCode: null,
-              statusDetail: null,
-              pageCount: result.page_count ?? null,
-              textLength: result.text_length ?? null,
-              chunkCount: result.chunk_count ?? null,
-              embeddingProvider: embedding.provider,
-              embeddingModel: result.embedding_model ?? embedding.modelId,
-              embeddingDimension: measured,
-              processedAt: new Date(),
-              processingVersion: doc.processingVersion + 1,
-            },
+          // The previous version's rows are already gone from PostgreSQL; its vectors in a remote store are removed by a retried job that is
+          // committed together with the READY status (so it exists exactly when the new version is live).
+          await db.$transaction(async (tx) => {
+            await tx.document.updateMany({
+              where: { id: doc.id },
+              data: {
+                status: "READY",
+                progress: 100,
+                statusCode: null,
+                statusDetail: null,
+                pageCount: result.page_count ?? null,
+                textLength: result.text_length ?? null,
+                chunkCount: result.chunk_count ?? null,
+                embeddingProvider: embedding.provider,
+                embeddingModel: result.embedding_model ?? embedding.modelId,
+                embeddingDimension: measured,
+                processedAt: new Date(),
+                processingVersion: doc.processingVersion + 1,
+              },
+            });
+            await queueSupersededVectors(tx, doc.ownerId, result.superseded);
           });
         } else {
           await db.document.updateMany({

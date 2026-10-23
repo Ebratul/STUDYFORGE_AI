@@ -37,6 +37,7 @@ from app.logging import log_event
 from app.providers.base import ChatRequest, EmbedRequest, Provider
 from app.providers.registry import ProviderRegistry
 from app.retrieval.search import search_chunks
+from app.vectorstore import VectorRuntime
 
 log = logging.getLogger("rag.generation")
 
@@ -69,6 +70,7 @@ class GenContext:
     secrets: list[str] = field(default_factory=list)
     closed: bool = False
     live_tasks: set = field(default_factory=set)
+    vectors: VectorRuntime | None = None  # None = pgvector mode
 
     async def shutdown(self) -> None:
         """Cancel every in-flight node (and thereby its provider HTTP call)."""
@@ -132,14 +134,18 @@ async def assemble_pool(ctx: GenContext) -> list[SourceChunk]:
                     raise AppError(ErrorCode.CAPABILITY_UNSUPPORTED, "Searching your documents for a topic needs an embedding provider, but none is configured.")
                 subject = getattr(body.spec, "subject", None) or ""
                 query = f"{topic} {subject}".strip()[:2000]
-                emb = await ctx.embed_provider.embed(EmbedRequest(model=body.embedding.model, api_key=body.embedding.api_key, inputs=[query]))
+                emb = await ctx.embed_provider.embed(
+                    EmbedRequest(model=body.embedding.model, api_key=body.embedding.api_key, inputs=[query],
+                                 dimensions=body.embedding.request_dimensions, expected_dimension=body.embedding.dimension)
+                )
                 if not emb.vectors:
                     raise AppError(ErrorCode.PROVIDER_ERROR, "The AI provider returned an unexpected response.", retryable=False)
                 async with ctx.pool.connection() as conn:
                     found = await search_chunks(
                         conn, owner_id=body.user_id, document_ids=body.sources.document_ids, query_embedding=emb.vectors[0],
-                        query_text=query, embedding_model=body.embedding.model, top_k=TOPIC_POOL_K, min_similarity=ctx.settings.retrieval_min_similarity,
-                        max_context_chars=None,
+                        query_text=query, embedding_provider=body.embedding.provider, embedding_model=body.embedding.model,
+                        embedding_dimension=body.embedding.dimension, top_k=TOPIC_POOL_K, min_similarity=ctx.settings.retrieval_min_similarity,
+                        max_context_chars=None, vectors=ctx.vectors,
                     )
                 floor = ctx.settings.retrieval_min_similarity
                 found = [c for c in found if c.similarity >= floor] if found and max(c.similarity for c in found) >= floor else []

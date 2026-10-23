@@ -1,6 +1,7 @@
 import { createApp } from "../../src/app.js";
 import { FakeRag } from "./fake-rag.js";
 import { MemoryStorage } from "./memory-storage.js";
+import { db } from "../../src/lib/db.js";
 import { TEST_ORIGIN, type TestUser } from "./users.js";
 
 export function makeApp() {
@@ -48,16 +49,18 @@ export async function readSse(res: Response): Promise<{ event: string; data: any
     });
 }
 
-/** Gives `user` a (mock) provider key plus default-chat and embedding preferences. */
-export async function setupAi(t: TestApp, user: Pick<TestUser, "headers">, opts: { embedding?: boolean } = {}) {
+/**
+ * Gives `user` a (mock) provider key plus default-chat and embedding preferences. The embedding preference is written directly as the
+ * validated 1536-d configuration the connection form would have saved: /api/ai/preferences deliberately refuses to change it.
+ */
+export async function setupAi(t: TestApp, user: Pick<TestUser, "headers" | "id">, opts: { embedding?: boolean; dimension?: number } = {}) {
   const c = client(t, user);
   expectOk(await c.put("/api/ai/credentials/mock", { apiKey: "mock-valid-key" }));
-  expectOk(
-    await c.put("/api/ai/preferences", {
-      default: { provider: "mock", modelId: "mock-chat" },
-      tasks: opts.embedding === false ? {} : { EMBEDDING: { provider: "mock", modelId: "mock-embed" } },
-    }),
-  );
+  expectOk(await c.put("/api/ai/preferences", { default: { provider: "mock", modelId: "mock-chat" }, tasks: {} }));
+  if (opts.embedding === false) return;
+  const cred = await db.providerCredential.findFirstOrThrow({ where: { userId: user.id, provider: "MOCK" }, select: { id: true } });
+  const data = { credentialId: cred.id, modelId: "mock-embed", validatedAt: new Date(), embeddingDimension: opts.dimension ?? 1536, embeddingRequestDimensions: null };
+  await db.modelPreference.upsert({ where: { userId_task: { userId: user.id, task: "EMBEDDING" } }, create: { userId: user.id, task: "EMBEDDING", ...data }, update: data });
 }
 
 function expectOk(res: Response) {

@@ -49,8 +49,8 @@ async def test_openai_models_merge_rules(settings):
     assert by["gpt-4-0613"].capabilities.structured_output == "no"
     assert by["gpt-4o"].context_length is None  # OpenAI does not report it: never invented
     e = by["text-embedding-3-small"]
-    assert e.capabilities.embeddings and not e.capabilities.chat and e.embedding_dimensions == "compatible"
-    assert by["text-embedding-3-large"].embedding_dimensions == "compatible"  # via dimensions=1536
+    assert e.capabilities.embeddings and not e.capabilities.chat
+    assert not hasattr(e, "embedding_dimensions")  # no 1536 judgement: the size is measured at validation time
     assert not by["gpt-4o"].capabilities.embeddings and by["gpt-4o"].capabilities.streaming
 
 
@@ -104,9 +104,6 @@ async def test_openrouter_models_use_api_metadata(settings):
     assert by["vendor/plain"].capabilities.structured_output == "no" and by["vendor/plain"].capabilities.tools == "no"
     assert by["vendor/plain"].context_length is None
     assert by["vendor/no-params"].capability_source == "unverified"
-    assert by["openai/text-embedding-3-small"].embedding_dimensions == "compatible"
-    assert by["baai/bge-large-en-v1.5"].embedding_dimensions == "incompatible"
-    assert by["vendor/mystery-embed"].embedding_dimensions == "unknown"
     assert all(by[i].capabilities.embeddings and not by[i].capabilities.chat for i in OR_EMB_IDS)
 
 

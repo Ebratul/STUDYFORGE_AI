@@ -14,9 +14,12 @@ export async function api(page: Page, method: string, path: string, body?: unkno
 
 /** Mock provider key + default chat model (+ optional embedding model) for the signed-in user. */
 export async function configureAi(page: Page, opts: { embedding?: boolean } = {}) {
+  if (opts.embedding) {
+    expect((await api(page, "PUT", "/api/ai/connection", { apiKey: VALID_KEY, chatModelId: "mock-chat", embeddingModelId: "mock-embed" })).ok()).toBe(true); // the embedding model is only set through the verified flow
+    return;
+  }
   expect((await api(page, "PUT", "/api/ai/credentials/mock", { apiKey: VALID_KEY })).ok()).toBe(true);
-  const prefs = { default: { provider: "mock", modelId: "mock-chat" }, tasks: opts.embedding ? { EMBEDDING: { provider: "mock", modelId: "mock-embed" } } : {} };
-  expect((await api(page, "PUT", "/api/ai/preferences", prefs)).ok()).toBe(true);
+  expect((await api(page, "PUT", "/api/ai/preferences", { default: { provider: "mock", modelId: "mock-chat" }, tasks: {} })).ok()).toBe(true);
 }
 
 export type McqForm = { topic?: string; text?: string; count?: number; difficulty?: "EASY" | "MEDIUM" | "HARD" | "MIXED"; language?: "en" | "bn"; grounding?: "SOURCE_ONLY" | "SOURCE_PREFERRED" | "GENERAL"; crossCheck?: boolean };

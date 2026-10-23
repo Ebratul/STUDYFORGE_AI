@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { BookOpenCheck, ShieldCheck, Sparkles, Users } from "lucide-react";
 import { Logo } from "@/components/brand/logo";
@@ -16,7 +17,9 @@ const POINTS = [
 export default async function AuthLayout({ children }: { children: React.ReactNode }) {
   const t = await getT();
   // UX convenience only; the app routes enforce authentication themselves.
-  if (await getMe()) redirect("/workspace");
+  // Exception: the password-reset link must work for a signed-in user too (a Google-only account sets its first password this way).
+  const pathname = (await headers()).get("x-pathname") ?? "";
+  if (!pathname.startsWith("/reset-password") && (await getMe())) redirect("/workspace");
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
       <aside className="relative hidden flex-col justify-between bg-brand-panel p-10 text-brand-panel-foreground lg:flex">

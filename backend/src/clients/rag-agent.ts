@@ -32,25 +32,49 @@ export type ModelInfo = {
 };
 
 /** One step of the connection validation (AI_CONNECTION_SPEC §1). `ok: null` + `skipped` = not run because an earlier step failed. */
-export type ValidationCheck = { ok: boolean | null; skipped?: boolean; code?: string; message?: string; latency_ms?: number; dimension?: number };
-export type ValidateConfigRequest = { provider: ProviderId; api_key: string; chat_model: string; embedding_model: string };
+export type ValidationCheck = {
+  ok: boolean | null;
+  skipped?: boolean;
+  code?: string;
+  message?: string;
+  latency_ms?: number;
+  /** embedding: the verified vector length; native_dimension = what the model returns without a `dimensions` parameter; request_dimensions = the verified `dimensions` value (absent = none needed). */
+  dimension?: number;
+  native_dimension?: number;
+  request_dimensions?: number;
+  /** chat_params: parameters verified / rejected (provider wire names). */
+  verified?: string[];
+  unsupported?: string[];
+  /** Sanitised facts about a failing upstream call (endpoint, HTTP status, short allow-listed codes). Never bodies or keys. */
+  diagnostics?: Record<string, string | number | boolean>;
+};
+/** `embedding_dimension` is the REQUESTED size (omitted = the model's native size); the verified size comes back in the result. */
+export type ValidateConfigRequest = { provider: ProviderId; api_key: string; chat_model: string; embedding_model: string; embedding_dimension?: number; chat_params?: WireParams };
 export type ValidateConfigResult = {
   ok: boolean;
   provider: ProviderId;
   embedding_dimension: number | null;
-  checks: { auth: ValidationCheck; chat: ValidationCheck; embedding: ValidationCheck };
+  checks: { auth: ValidationCheck; chat: ValidationCheck; chat_params: ValidationCheck; embedding: ValidationCheck };
 };
+
+export type PublicModel = { id: string; name: string; context_length: number | null; free: boolean; supported_parameters: string[] | null };
+export type PublicModelsResult = { provider: ProviderId; kind: "chat" | "embedding"; available: boolean; fetched_at: string; models: PublicModel[] };
 
 export type ModelsResult = { provider: ProviderId; fetched_at: string; models: ModelInfo[] };
 
+/** Generation parameters on the wire; a key is present only when the user set it (nothing else is ever sent). */
+export type WireParams = { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null; frequency_penalty?: number | null; presence_penalty?: number | null; seed?: number | null };
+
 export type Credentials = { provider: ProviderId; api_key: string; model: string };
+/** Embedding credentials always name the vector length; `request_dimensions` (= dimension) is present only when the model must be asked for it. */
+export type EmbeddingCredentials = Credentials & { dimension: number; request_dimensions?: number };
 
 export type ChatRequest = {
   request_id: string;
   user_id: string;
   mode: "GENERAL" | "DOCUMENT_ONLY";
-  chat: Credentials & { params: { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null } };
-  embedding: Credentials | null;
+  chat: Credentials & { params: WireParams };
+  embedding: EmbeddingCredentials | null;
   messages: { role: "user" | "assistant"; content: string }[];
   document_ids: string[];
   use_documents: boolean;
@@ -92,8 +116,8 @@ export type GenerateKind = "mcq" | "cq";
 export type GenerateRequest = {
   request_id: string;
   user_id: string;
-  chat: Credentials & { params: { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null } };
-  embedding: Credentials | null;
+  chat: Credentials & { params: WireParams };
+  embedding: EmbeddingCredentials | null;
   context_tokens: number | null;
   grounding: "SOURCE_ONLY" | "SOURCE_PREFERRED" | "GENERAL";
   sources: { topic: string | null; pasted_text: string | null; document_ids: string[] };
@@ -151,7 +175,7 @@ export type GenerateEvent =
 // --- Part 5: AI feedback and study plans (rag_agent/CONTRACT.md §10, docs/PART5_SPEC.md §3 and §6) ---
 
 export type AnalyzeStepType = "REVIEW_NOTES" | "REVISIT_QUESTIONS" | "PRACTICE_MCQ" | "PRACTICE_CQ" | "COMPARE_ATTEMPTS" | "ASK_ASSISTANT" | "READ_DOCUMENT";
-export type AnalyzeChat = Credentials & { params: { temperature?: number | null; top_p?: number | null; max_output_tokens?: number | null } };
+export type AnalyzeChat = Credentials & { params: WireParams };
 export type AnalyzeTopic = { topic: string; questions: number; correct: number; incorrect: number; unanswered: number; accuracy_bp: number };
 
 export type AnalyzeResultContext = {
@@ -202,8 +226,23 @@ export type IngestParams = {
   filename: string;
   mime_type: string;
   processing_version: number;
-  embedding: Credentials;
+  embedding: EmbeddingCredentials;
 };
+
+/** `unknown` = a legacy chunk set whose provider was never recorded. */
+export type ReindexIdentity = { provider: ProviderId | "unknown"; model: string; dimension: number };
+export type ReindexParams = {
+  document_id: string;
+  owner_id: string;
+  processing_version: number;
+  source: ReindexIdentity;
+  target: EmbeddingCredentials;
+};
+/** STALE = the document changed (or its source chunks are gone) while embedding; nothing was written. */
+export type ReindexResult = { type: "result"; status: "READY" | "STALE"; chunk_count: number; embedding_dimension: number | null };
+
+/** `(document_id, chunk_id)` pairs of one embedding identity: exactly the vectors a retried job must remove from the vector store. */
+export type SupersededVectors = { identity: ReindexIdentity; chunks: [string, string][] }[];
 
 export type IngestResult =
   | {
@@ -217,8 +256,21 @@ export type IngestResult =
       embedding_dimension?: number | null;
       code?: string | null;
       message?: string | null;
+      /** dual / pinecone only: the previous version's vectors (their PostgreSQL rows are already gone). Absent in pgvector mode. */
+      superseded?: SupersededVectors;
+      /** More than rag_agent reports per ingest were superseded; the rest are stale-version vectors the reconcile tool removes. */
+      superseded_truncated?: boolean;
     }
   | { type: "error"; code: string; message: string; retryable?: boolean; retry_after_seconds?: number | null };
+
+/** Body of POST /v1/vectors/delete. Idempotent; in pgvector mode rag_agent answers `noop`. */
+export type VectorDeleteRequest =
+  | { scope: "document"; owner_id: string; document_id: string }
+  | { scope: "user"; owner_id: string; document_ids: string[] }
+  | { scope: "chunks"; owner_id: string; identity: ReindexIdentity; chunks: [string, string][] };
+export type VectorDeleteResult = { status: "ok" | "noop"; mode: string; deleted: number };
+/** What rag_agent is configured with (no hosts, names or keys). `dimensions` = the vector sizes the remote index holds, null in pgvector mode. */
+export type VectorStatus = { mode: "pgvector" | "dual" | "pinecone"; dimensions: number[] | null };
 
 export class RagAgentError extends Error {
   constructor(
@@ -241,7 +293,14 @@ export interface RagAgentClient {
   listModels(provider: ProviderId, apiKey: string): Promise<ModelsResult>;
   /** Auth + one tiny chat call + one tiny embedding call with the given key and model ids; nothing is stored. */
   validateConfig(body: ValidateConfigRequest, signal?: AbortSignal): Promise<ValidateConfigResult>;
+  /** Keyless suggestions from the provider's public model listing (cached by rag_agent). */
+  publicModels(provider: ProviderId, kind: "chat" | "embedding"): Promise<PublicModelsResult>;
   ingest(params: IngestParams, file: Uint8Array, onProgress: (stage: string, progress: number) => void, signal?: AbortSignal): Promise<IngestResult>;
+  /** Re-embeds one document's existing chunk texts under a new identity into a staged chunk set (the active set is never modified). */
+  reindex(params: ReindexParams, signal?: AbortSignal): Promise<ReindexResult>;
+  /** Removes vectors from the remote vector store (a no-op in pgvector mode, where deleting the rows deletes the vectors). */
+  deleteVectors(body: VectorDeleteRequest, signal?: AbortSignal): Promise<VectorDeleteResult>;
+  vectorStatus(signal?: AbortSignal): Promise<VectorStatus>;
   chatStream(body: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent>;
   generateStream(kind: GenerateKind, body: GenerateRequest, signal?: AbortSignal): AsyncGenerator<GenerateEvent>;
   analyzeResult(body: AnalyzeResultRequest, signal?: AbortSignal): Promise<AnalyzeResponse<RagAnalysisContent>>;
@@ -354,6 +413,10 @@ export class HttpRagAgentClient implements RagAgentClient {
     });
   }
 
+  publicModels(provider: ProviderId, kind: "chat" | "embedding") {
+    return this.json<PublicModelsResult>(`/v1/providers/${encodeURIComponent(provider)}/public-models?kind=${kind}`, { headers: this.headers(), timeoutMs: 20_000 });
+  }
+
   validateConfig(body: ValidateConfigRequest, signal?: AbortSignal) {
     return this.json<ValidateConfigResult>("/v1/providers/validate", {
       method: "POST",
@@ -362,6 +425,30 @@ export class HttpRagAgentClient implements RagAgentClient {
       timeoutMs: 75_000, // three checks, each bounded to 20 s by rag_agent
       ...(signal ? { signal } : {}),
     });
+  }
+
+  reindex(params: ReindexParams, signal?: AbortSignal) {
+    return this.json<ReindexResult>("/v1/reindex", {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify(params),
+      timeoutMs: this.timeout * 3, // a long document is embedded in many batches
+      ...(signal ? { signal } : {}),
+    });
+  }
+
+  deleteVectors(body: VectorDeleteRequest, signal?: AbortSignal) {
+    return this.json<VectorDeleteResult>("/v1/vectors/delete", {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify(body),
+      timeoutMs: 60_000, // a large document is removed in several remote calls
+      ...(signal ? { signal } : {}),
+    });
+  }
+
+  vectorStatus(signal?: AbortSignal) {
+    return this.json<VectorStatus>("/v1/vectors/status", { headers: this.headers(), timeoutMs: 10_000, ...(signal ? { signal } : {}) });
   }
 
   async ingest(params: IngestParams, file: Uint8Array, onProgress: (stage: string, progress: number) => void, signal?: AbortSignal): Promise<IngestResult> {

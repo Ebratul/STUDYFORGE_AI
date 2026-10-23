@@ -55,7 +55,8 @@ async function englishLeft(page: Page, allow: (string | RegExp)[] = []): Promise
   return lines.filter((l) => /[A-Za-z]{4,}/.test(l) && !allow.some((a) => (typeof a === "string" ? l.includes(a) : a.test(l))));
 }
 
-const USER_DATA = [/^Mechanics every Thursday$/, /^(Windows|macOS|Linux)-এ (Chrome|Edge|Firefox|Safari)/, /@example\.test/, /Because option A|Remember A/, /^[A-Z][a-z]+\/[A-Za-z_]+$/, /^(English|বাংলা \(Bangla\))$/, /Ayesha Rahman/, /StudyForge/, /Cells|Energy/, /Exam question/, /Right answer|Wrong answer/, /E2E exam|Cells and energy|Physics circle|Feedback exam|Bangla exam/, /^\d*\s*@/];
+// Brand names (StudyForge, Google) stay in Latin script in every language.
+const USER_DATA = [/^(Google|Google [^A-Za-z]*)$|\bGoogle\b/, /^Mechanics every Thursday$/, /^(Windows|macOS|Linux)-এ (Chrome|Edge|Firefox|Safari)/, /@example\.test/, /Because option A|Remember A/, /^[A-Z][a-z]+\/[A-Za-z_]+$/, /^(English|বাংলা \(Bangla\))$/, /Ayesha Rahman/, /StudyForge/, /Cells|Energy/, /Exam question/, /Right answer|Wrong answer/, /E2E exam|Cells and energy|Physics circle|Feedback exam|Bangla exam/, /^\d*\s*@/];
 
 test.describe("language preference", () => {
   test("choosing Bangla in Settings → Profile works, survives a reload and follows the account into a brand-new session", async ({ browser }) => {

@@ -70,6 +70,7 @@ export function errorCategory(code: string): "validation" | "auth" | "rate_limit
     case "PROVIDER_ERROR":
     case "GENERATION_FAILED":
     case "UPSTREAM_UNAVAILABLE":
+    case "STORAGE_UNAVAILABLE":
       return "upstream";
     default:
       return "internal";

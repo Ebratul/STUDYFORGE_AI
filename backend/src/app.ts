@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getAuth } from "./auth/auth.js";
 import type { RagAgentClient } from "./clients/rag-agent.js";
+import { isGoogleConfigured } from "./config/env.js";
 import { db } from "./lib/db.js";
 import { logger } from "./lib/logger.js";
 import type { AppEnv } from "./http/context.js";
@@ -38,6 +39,9 @@ export function createApp(deps: Deps) {
     }
     return c.json({ status: "ready", ai: (await deps.rag.ready()) ? "up" : "down" });
   });
+
+  // Which optional sign-in providers are configured (public, no secrets), so the UI only offers working buttons.
+  app.get("/api/auth-providers", (c) => c.json({ google: isGoogleConfigured() }));
 
   // CSRF: every mutating /api request must carry our own Origin (the browser sends the frontend origin).
   app.use("/api/*", async (c, next) => {

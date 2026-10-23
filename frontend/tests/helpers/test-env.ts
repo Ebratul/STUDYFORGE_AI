@@ -20,6 +20,12 @@ export const E2E_SECRETS = {
   RAG_AGENT_TOKEN: "e2e-rag-agent-token-0123456789abcdef",
 };
 
+/** Throw-away Google client values so the button renders. Google itself is never contacted: the browser's hop to accounts.google.com is intercepted. */
+export const E2E_GOOGLE = {
+  AUTH_GOOGLE_ID: "e2e-test-client.apps.googleusercontent.com",
+  AUTH_GOOGLE_SECRET: "e2e-only-google-client-secret",
+};
+
 export const E2E_STORAGE_DIR = "/tmp/studyforge-e2e-storage";
 
 export function backendDir(): string {

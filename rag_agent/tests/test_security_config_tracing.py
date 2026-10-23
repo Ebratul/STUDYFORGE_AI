@@ -45,12 +45,13 @@ def test_defaults_match_contract(monkeypatch):
     assert s.parse_timeout_seconds == 60 and s.chunk_target_chars == 3200 and s.chunk_overlap_chars == 400
     assert s.provider_timeout_seconds == 60 and s.max_chat_chars == 60_000 and s.retrieval_top_k == 6
     assert s.retrieval_min_similarity == 0.30 and s.retrieval_max_context_chars == 12_000
-    assert s.max_concurrent_ingests == 2 and s.ocr_enabled is False and s.embedding_dimensions == 1536
+    assert s.max_concurrent_ingests == 2 and s.ocr_enabled is False
+    assert not hasattr(s, "embedding_dimensions")  # the dimension is per request now (backend owns the setting)
     assert s.langsmith_tracing is False and s.langsmith_include_content is False
 
 
 def test_invalid_config_is_rejected():
-    for kw in ({"embedding_dimensions": 768}, {"chunk_overlap_chars": 5000}, {"port": 0}, {"app_env": "staging"}):
+    for kw in ({"chunk_overlap_chars": 5000}, {"port": 0}, {"app_env": "staging"}):
         with pytest.raises(ValidationError):
             make_settings(**kw)
 
@@ -71,7 +72,7 @@ def test_env_example_has_only_placeholders_and_all_variables():
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[1] / ".env.example").read_text()
-    for var in ("APP_ENV", "HOST", "PORT", "DATABASE_URL", "RAG_AGENT_TOKEN", "ALLOW_MOCK_PROVIDER", "EMBEDDING_DIMENSIONS", "MAX_UPLOAD_BYTES",
+    for var in ("APP_ENV", "HOST", "PORT", "DATABASE_URL", "RAG_AGENT_TOKEN", "ALLOW_MOCK_PROVIDER", "MAX_UPLOAD_BYTES",
                 "MAX_PAGES", "MAX_TEXT_CHARS", "PARSE_TIMEOUT_SECONDS", "CHUNK_TARGET_CHARS", "CHUNK_OVERLAP_CHARS", "PROVIDER_TIMEOUT_SECONDS",
                 "MAX_CHAT_CHARS", "RETRIEVAL_TOP_K", "RETRIEVAL_MIN_SIMILARITY", "RETRIEVAL_MAX_CONTEXT_CHARS", "MAX_CONCURRENT_INGESTS",
                 "OCR_ENABLED", "LOG_LEVEL", "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_INCLUDE_CONTENT"):

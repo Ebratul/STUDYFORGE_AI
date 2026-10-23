@@ -68,7 +68,7 @@ Reuses the verified Part 1 TypeScript (Better Auth, Prisma, Zod, redaction, rate
 ### D-022 — No ANN index on embeddings; exact filtered search · accepted
 Retrieval is always restricted to one owner's selected documents (hundreds to low thousands of chunks). HNSW/IVFFlat post-filter, so with many users they can return too few rows for a small owner; exact scans over the filtered rows are both correct and fast at this scale. Revisit (iterative scan / partitioning) beyond ~50k chunks per user.
 
-### D-023 — Fixed `vector(1536)`; one embedding model per document set · accepted
+### D-023 — Fixed `vector(1536)`; one embedding model per document set · superseded by D-044
 OpenAI `text-embedding-3-*` (via the `dimensions` parameter) and `ada-002` produce 1536-d vectors; other models are rejected with a clear error. Each chunk records its `embeddingModel`; retrieval only reads chunks made by the user's *current* embedding model, and changing the model requires reprocessing (UI warns and offers Reprocess). Groq has no embeddings.
 
 ### D-024 — Document-only answers are verified before they are shown (no token streaming) · accepted
@@ -127,3 +127,29 @@ Instead of a second chat stack, assistant sessions create an ordinary conversati
 
 ### D-042 — Postgres is the queue; no Redis · accepted (Part 5)
 Exam expiry, reminders, release notices, AI feedback/plan jobs and ingestion run on the existing `Job` table with bounded retries, dedupe keys and heartbeat visibility. A Redis-compatible queue would add an operational dependency without a feature need at the supported scale.
+
+### D-043 — Google sign-in extends Better Auth; Google is never linked implicitly · accepted
+The project already uses Better Auth (D-004), so Google is its built-in `google` social provider (not Auth.js). Env names are `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` (read by `config/env.ts`; the library takes them as options); `BETTER_AUTH_SECRET` and `APP_URL` stay the secret and canonical URL (`AUTH_SECRET`/`AUTH_URL` are Auth.js names and are not used). Redirect URI = `APP_URL/api/auth/callback/google`. Decisions: (1) `disableImplicitLinking: true` — Better Auth's default would link when both e-mails are verified, but the pre-registration takeover class and a mailbox-reassignment risk outweigh the convenience; owners link explicitly from Settings (same e-mail, fresh session, audited). (2) Tokens are discarded in `databaseHooks.account` (no feature needs them; `updateAccountOnSignIn: false`). (3) `validateUserInfo` fails closed for unverified/missing e-mail or subject. (4) `advanced.disableOriginCheck: false` is set explicitly because Better Auth silently disables origin/callback checks when `NODE_ENV=test`. (5) The button is shown only if the backend reports the provider configured (`GET /api/auth-providers`). (6) Google-only users add a password through the existing reset-link flow; `/reset-password` therefore no longer redirects signed-in users away (via an `x-pathname` header set in `proxy.ts`). Consequence: a user who registered with a password and then clicks "Continue with Google" must first sign in and connect Google once.
+
+### D-044 — Configurable embedding model + dimension; staged re-indexing; dimension-agnostic vector column · accepted
+Supersedes D-023. The vector length is no longer a build-time constant: the user may choose the embedding model and an optional size, and a
+saved configuration is only activated after a live request proves the provider returns exactly that size (never padded or truncated; no
+built-in list of which model supports what). Full contract: [EMBEDDING_SETTINGS_SPEC.md](EMBEDDING_SETTINGS_SPEC.md).
+* **Precedence:** the database (per-user, measured) beats the deployment default `EMBEDDING_DIMENSIONS`, which only seeds a blank field and is itself verified. Changing the env value never changes or re-indexes an existing configuration.
+* **Storage:** `DocumentChunk.embedding` is plain `vector`; `embeddingDimension` is a generated column (`vector_dims`), so it cannot lie. Chunk identity = provider + model + dimension, part of the unique key, so an active and a staged chunk set coexist. Every read names one identity; retrieval filters it in a `MATERIALIZED` CTE before any distance operator. Still no ANN index (D-022); one would have to be an expression index per dimension.
+* **Re-indexing:** the saved configuration is the *active* index. A change with indexed documents builds a second chunk set from the stored chunk texts in background jobs, and one transaction switches preference, documents' identity and chunks only after the database confirms every READY document has a complete set of exactly the target length. Failure/cancel deletes the staged set and leaves the active index untouched.
+* **Closed bypass:** `PUT /api/ai/preferences` can no longer change the embedding model (it skipped verification and left a stale dimension); removal is still allowed.
+* **Cost accepted:** the migration is not backward compatible with old code (`DocumentChunk.embeddingProvider` is NOT NULL, no default — an explicit failure is preferred over silently unsearchable rows); see DEPLOYMENT §5.
+
+### D-045 — Pinecone as an optional vector store; PostgreSQL stays authoritative; default unchanged · accepted
+Supersedes nothing: D-022 (exact filtered search in PostgreSQL) remains the default (`VECTOR_STORE=pgvector`). Full contract and runbook:
+[VECTOR_STORE_SPEC.md](VECTOR_STORE_SPEC.md).
+* **Candidates, not answers.** Pinecone returns chunk ids and scores only; every candidate is re-validated in PostgreSQL (owner on chunk and document, authorised ids, current `processingVersion`, READY, embedding identity, Pinecone marker) and text/page/section are read from PostgreSQL. A wrong, stale or hostile store can degrade ranking but cannot widen what a user sees, which is also why Pinecone's eventual consistency is acceptable.
+* **Three modes, one flag, same value in both services:** `pgvector` | `dual` (write both, serve PostgreSQL, log a structured comparison) | `pinecone`. Rollback is `VECTOR_STORE=pgvector`; `pinecone` mode therefore keeps writing the PostgreSQL vector by default (`PINECONE_KEEP_POSTGRES_VECTORS`).
+* **No atomicity is claimed.** Order: upsert, wait (bounded) for visibility, commit PostgreSQL. A failure afterwards deletes exactly the ids written (compensation); leftovers have no row and are unreachable, and an operator tool removes them. Every write is idempotent through deterministic chunk ids.
+* **Deletes become explicit** (nothing cascades into a remote store): jobs queued in the same transaction as the row deletion, on the existing queue, retried; exact ids come from `DELETE … RETURNING`.
+* **Fixed index dimension vs. per-user configurable dimension (D-044):** one pre-created index per supported size (`PINECONE_INDEXES`); other sizes are refused before embedding money is spent. Nothing is padded or truncated.
+* **Tenant isolation:** namespace per user by default (mandatory `ownerId` filter regardless), built in one place; credentials only in rag_agent; Pinecone hosts must be `*.pinecone.io` because the key is sent to them.
+* **Direct REST over httpx, no SDK:** no new dependency, every call mockable; the cost is that response shapes come from the REST reference and are verified only by a fake until the opt-in live test is run.
+* **Schema:** `pineconeIndexedAt` plus `embeddingDimension` no longer generated (values preserved; a trigger keeps pre-migration code working). The `embedding` column and its data are untouched.
+

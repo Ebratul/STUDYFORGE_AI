@@ -71,7 +71,7 @@ Each service documents its own: [backend/.env.example](.env.example), `frontend/
 | frontend | `pnpm test:e2e` (needs Postgres + Mailpit; builds and starts all three services with the mock provider on :3100/:4100/:8200, database `studyforge_e2e`; ≈9 min) | 174 browser tests: auth, AI settings, documents/chat, generation, bank, exams, groups, dashboard/AI feedback, admin, Bangla UI, a11y sweep, and the full user journey incl. failure recovery |
 | all | `bash backend/scripts/scan-secrets.sh` · `pnpm audit --prod` (backend, frontend) · `uv export --frozen --no-hashes --no-emit-project \| uvx pip-audit -r /dev/stdin --no-deps --disable-pip` (rag_agent) · `bash backend/scripts/smoke.sh <frontend-url>` | scans and the post-deployment smoke test |
 
-Test databases: `studyforge_test` (backend), `studyforge_rag_test` (rag_agent), `studyforge_e2e` (browser tests) — each name must end in `_test`/`_e2e`; the tools refuse other databases. S3 driver tests need `S3_TEST_ENDPOINT` (e.g. adobe/s3mock on :9090).
+Test databases: `studyforge_test` (backend), `studyforge_rag_test` (rag_agent), `studyforge_e2e` (browser tests) — each name must end in `_test`/`_e2e`; the tools refuse other databases. S3 driver tests need `S3_TEST_ENDPOINT` (e.g. adobe/s3mock on :9090). Cloudinary tests are mocked; a live check is opt-in (see [docs/CLOUDINARY_STORAGE.md](docs/CLOUDINARY_STORAGE.md)).
 
 No test needs a paid provider call. Live OpenAI/OpenRouter/Groq behaviour is **untested** (no keys were available); see the status doc.
 
@@ -79,4 +79,4 @@ No test needs a paid provider call. Live OpenAI/OpenRouter/Groq behaviour is **u
 See [docs/SECURITY.md](docs/SECURITY.md) and [docs/PROJECT_ARCHITECTURE.md §5](docs/PROJECT_ARCHITECTURE.md). Headlines: keys encrypted at rest (AES-256-GCM) and never returned; server-side authorization with ownership in every query; retrieval filtered in SQL; document-only answers verified in code; Markdown rendering sanitised with images disabled; CSP nonce, HttpOnly cookies, rate limits, redacted logs. The backend and rag_agent must not be exposed publicly. The application has **not** been independently audited.
 
 ## Known limitations
-See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md). Notably: only text-based PDFs (no OCR), no video, one embedding model at a time (1536-d), email cannot be changed, CI has not run on GitHub, and no live provider has ever been called — AI-generated questions are **not guaranteed correct** and are always shown as "review before use".
+See [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md). Notably: only text-based PDFs (no OCR), no video, one embedding model at a time (size configurable, 8–4096), email cannot be changed, CI has not run on GitHub, and no live provider has ever been called — AI-generated questions are **not guaranteed correct** and are always shown as "review before use".

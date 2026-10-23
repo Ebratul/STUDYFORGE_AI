@@ -1,6 +1,6 @@
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { KEY_PATTERN, type Storage } from "./types.js";
+import { KEY_PATTERN, probeWritable, randomKey, type Storage } from "./types.js";
 
 /** S3-compatible private bucket (Cloudflare R2, MinIO, AWS S3). The bucket must NOT be public. */
 export class S3Storage implements Storage {
@@ -13,6 +13,14 @@ export class S3Storage implements Storage {
       forcePathStyle: cfg.forcePathStyle,
       credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
     });
+  }
+
+  newKey(userId: string) {
+    return randomKey("u", userId);
+  }
+
+  async ping() {
+    await probeWritable(this);
   }
 
   private key(key: string) {

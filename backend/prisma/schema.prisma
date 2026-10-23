@@ -61,6 +61,7 @@ model User {
   usageRecords        UsageRecord[]
   credentials         ProviderCredential[]
   modelPrefs          ModelPreference[]
+  embeddingReindexes  EmbeddingReindex[]
   conversations       Conversation[]
   documents           Document[]
   generationRuns      GenerationRun[]
@@ -287,7 +288,15 @@ model ModelPreference {
   maxTokens          Int?
   // Set by the connection form (PUT /api/ai/connection) after the provider accepted the key and both models.
   validatedAt        DateTime?
-  embeddingDimension Int? // EMBEDDING row: vector length measured by the validation call
+  // EMBEDDING row: the ACTIVE index's vector length, as measured (never assumed) by the validation call. This database value overrides the
+  // deployment default (env EMBEDDING_DIMENSIONS), which only seeds a configuration that has no saved dimension yet.
+  embeddingDimension Int?
+  // EMBEDDING row: the `dimensions` request parameter that produced `embeddingDimension` (verified by a live call), or null when the model's
+  // native size is used and no parameter is sent. Documents and queries must be embedded with exactly this value.
+  embeddingRequestDimensions Int?
+  // Optional generation parameters beyond the three columns above: { frequencyPenalty?, presencePenalty?, seed? } (non-secret, validated
+  // against an allow-list with ranges on every write and on every read). A parameter that is absent is never sent to the provider.
+  extraParams        Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -420,7 +429,8 @@ model Document {
   embeddingProvider  AiProvider?
   embeddingModel     String?
   // Actual length of the stored vectors (verified by rag_agent on every vector). Together with provider + model it is the embedding
-  // identity: retrieval only uses documents whose identity equals the user's current embedding configuration.
+  // identity: retrieval only uses documents whose identity equals the user's current embedding configuration. These three columns name
+  // the document's ACTIVE index; a staged index being built by an EmbeddingReindex lives only in DocumentChunk until it is activated.
   embeddingDimension Int?
   // Chunks belong to exactly one processing version; retrieval only reads the current one.
   processingVersion  Int            @default(0)
@@ -436,31 +446,71 @@ model Document {
   @@index([ownerId, createdAt(sort: Desc)])
 }
 
-// "embedding" (vector(1536)) and "search" (tsvector) exist only in SQL (see the part2 migration);
-// Prisma cannot model them, so the rag_agent service reads/writes them with raw SQL.
+// "embedding" (dimension-agnostic vector), "embeddingDimension" (generated from the vector) and "search" (tsvector) exist only in SQL (see
+// the embedding_dimensions migration); Prisma cannot model them, so the rag_agent service reads/writes them with raw SQL.
+// A document can hold several chunk sets for the SAME processingVersion at once, one per embedding identity (provider + model + dimension):
+// the active one and, while an EmbeddingReindex is building, the staged one. Every read must name one identity.
 model DocumentChunk {
-  id                String                       @id
-  documentId        String
-  document          Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  ownerId           String // denormalised so every retrieval query can filter on it directly
-  chunkIndex        Int
-  processingVersion Int
-  page              Int?
-  section           String?
-  content           String
-  tokenCount        Int
-  embeddingModel    String
-  metadata          Json?
-  // vector(1536). Written/read with raw SQL by rag_agent. Deliberately NO ANN (HNSW/IVFFlat) index: retrieval is
-  // always filtered to one owner's few documents, and approximate indexes post-filter (can return too few rows).
-  embedding         Unsupported("vector(1536)")?
+  id                 String                       @id
+  documentId         String
+  document           Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  ownerId            String // denormalised so every retrieval query can filter on it directly
+  chunkIndex         Int
+  processingVersion  Int
+  page               Int?
+  section            String?
+  content            String
+  tokenCount         Int
+  // Wire id of the provider ("openai" | "openrouter" | "mock") + model that produced the vector.
+  embeddingProvider  String
+  embeddingModel     String
+  // The vector's real length. Equal to vector_dims("embedding") whenever a local vector exists (a trigger derives it and rejects a wrong
+  // value), so it can never disagree with the data; rows whose vector lives only in Pinecone carry the verified dimension explicitly.
+  embeddingDimension Int?
+  // Set once this chunk's vector has been written to Pinecone and seen there (VECTOR_STORE=dual|pinecone). NULL in pgvector mode.
+  pineconeIndexedAt  DateTime?
+  metadata           Json?
+  // NULL when VECTOR_STORE=pinecone (the vector then lives only in Pinecone; the text, ownership and status here stay authoritative).
+  // Plain `vector` (no fixed length): any length 1..16000 fits, and a vector is only ever compared with vectors of the same identity.
+  // Deliberately NO ANN (HNSW/IVFFlat) index: retrieval is always filtered to one owner's few documents, and approximate indexes
+  // post-filter (can return too few rows). If one is added later it must be an expression index per dimension (embedding::vector(N)).
+  embedding          Unsupported("vector")?
   // tsvector generated from "content" (see migration SQL); keyword side of hybrid retrieval.
-  search            Unsupported("tsvector")?     @default(dbgenerated("to_tsvector('simple'::regconfig, content)"))
-  createdAt         DateTime                     @default(now())
+  search             Unsupported("tsvector")?     @default(dbgenerated("to_tsvector('simple'::regconfig, content)"))
+  createdAt          DateTime                     @default(now())
 
-  @@unique([documentId, processingVersion, chunkIndex])
+  @@unique([documentId, processingVersion, embeddingProvider, embeddingModel, embeddingDimension, chunkIndex], map: "DocumentChunk_identity_chunk_key")
   @@index([ownerId, documentId])
   @@index([search], type: Gin)
+}
+
+// A staged re-index (SETTINGS: embedding model/dimension change). The user's ModelPreference(EMBEDDING) keeps pointing at the old,
+// still-searchable index while this row is BUILDING; only when every READY document has a complete, verified chunk set under the target
+// identity are the preference, the documents' identity and the chunk sets switched in ONE transaction (status -> ACTIVATED).
+enum EmbeddingReindexStatus {
+  BUILDING
+  ACTIVATED
+  FAILED
+  CANCELLED
+}
+
+model EmbeddingReindex {
+  id                String                 @id @default(cuid())
+  userId            String
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          AiProvider
+  modelId           String
+  dimension         Int
+  requestDimensions Int?
+  status            EmbeddingReindexStatus @default(BUILDING)
+  errorCode         String?
+  errorMessage      String? // safe, user-facing
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  finishedAt        DateTime?
+
+  // SQL only: UNIQUE ("userId") WHERE status = 'BUILDING' — a user has at most one index under construction.
+  @@index([userId, status])
 }
 
 // ---------------------------------------------------------------------------

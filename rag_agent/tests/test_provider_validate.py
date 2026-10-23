@@ -45,8 +45,11 @@ async def test_openrouter_all_checks_pass_and_requests_are_minimal(client):
     assert r.status_code == 200
     out = r.json()
     assert out["ok"] is True and out["provider"] == "openrouter" and out["embedding_dimension"] == 1536
-    assert set(out["checks"]) == {"auth", "chat", "embedding"} and all(c["ok"] is True for c in out["checks"].values())
-    assert out["checks"]["embedding"]["dimension"] == 1536
+    assert set(out["checks"]) == {"auth", "chat", "chat_params", "embedding"}
+    assert out["checks"]["chat_params"] == {"ok": None, "skipped": True, "message": "No custom parameters are set, so the provider's defaults are used."}
+    assert all(out["checks"][k]["ok"] is True for k in ("auth", "chat", "embedding"))
+    assert out["checks"]["embedding"]["dimension"] == 1536 and out["checks"]["embedding"]["native_dimension"] == 1536
+    assert "request_dimensions" not in out["checks"]["embedding"]
     assert CANARY_KEY not in r.text
 
     sent_chat = json.loads(chat.calls.last.request.content)
@@ -55,7 +58,8 @@ async def test_openrouter_all_checks_pass_and_requests_are_minimal(client):
     assert [x["role"] for x in sent_chat["messages"]] == ["user"] and sent_chat["messages"][0]["content"] == "Reply with OK."
     sent_emb = json.loads(emb.calls.last.request.content)
     assert sent_emb["model"] == "openai/text-embedding-3-small" and sent_emb["input"] == ["StudyForge connection test"]
-    assert sent_emb["dimensions"] == 1536 and sent_emb["encoding_format"] == "float"
+    assert "dimensions" not in sent_emb and sent_emb["encoding_format"] == "float"  # no size asked for: the native size is measured, nothing is sent
+    assert emb.call_count == 1
 
     # the key only ever goes to https://openrouter.ai/api/v1/... in the Authorization header
     assert {c.request.url.host for c in calls} == {"openrouter.ai"}
@@ -73,17 +77,16 @@ async def test_empty_chat_completion_with_valid_finish_still_counts(client):
 
 
 @pytest.mark.parametrize(
-    ("provider", "emb", "expect_dims"),
+    ("provider", "emb"),
     [
-        ("openrouter", "openai/text-embedding-3-small", True),
-        ("openrouter", "openai/text-embedding-3-large", True),
-        ("openrouter", "cohere/embed-english-v3.0", False),
-        ("openrouter", "text-embedding-3-small", False),  # not the openai/ prefix the adapter documents
-        ("openai", "text-embedding-3-large", True),
-        ("openai", "text-embedding-ada-002", False),
+        ("openrouter", "openai/text-embedding-3-small"),
+        ("openrouter", "openai/text-embedding-3-large"),
+        ("openrouter", "cohere/embed-english-v3.0"),
+        ("openai", "text-embedding-3-large"),
+        ("openai", "text-embedding-ada-002"),
     ],
 )
-async def test_dimensions_param_only_where_documented(client, provider, emb, expect_dims):
+async def test_dimensions_param_is_never_sent_unless_a_different_size_is_requested(client, provider, emb):
     base = BASES[provider]
     with respx.mock as m:
         if provider == "openrouter":
@@ -92,10 +95,9 @@ async def test_dimensions_param_only_where_documented(client, provider, emb, exp
         m.post(f"{base}/chat/completions").mock(return_value=httpx.Response(200, json=chat_json()))
         route = m.post(f"{base}/embeddings").mock(return_value=httpx.Response(200, json=embed_json(1, 1536)))
         r = await client.post(URL, json=body(provider=provider, emb=emb))
-    assert r.json()["checks"]["embedding"]["ok"] is True
-    sent = json.loads(route.calls.last.request.content)
-    assert ("dimensions" in sent) is expect_dims
-    assert sent.get("dimensions", 1536) == 1536
+        same = await client.post(URL, json=body(provider=provider, emb=emb, embedding_dimension=1536))  # requested == native
+    assert r.json()["checks"]["embedding"]["ok"] is True and same.json()["checks"]["embedding"]["ok"] is True
+    assert all("dimensions" not in json.loads(c.request.content) for c in route.calls) and route.call_count == 2
 
 
 # ----------------------------------------------------------------------------------------------------- auth failures
@@ -194,15 +196,17 @@ async def test_malformed_json_bodies(client):
 
 
 @pytest.mark.parametrize("dim", [3072, 768, 1024])
-async def test_dimension_mismatch_names_the_measured_size(client, dim):
+async def test_a_model_that_ignores_the_requested_size_is_a_mismatch_naming_both_sizes(client, dim):
     with respx.mock as m:
-        mock_ok(m, dim=dim)
-        r = await client.post(URL, json=body(emb="openai/text-embedding-3-large"))
+        _, emb_route = mock_ok(m, dim=dim)  # always answers `dim`, whatever is asked
+        r = await client.post(URL, json=body(emb="openai/text-embedding-3-large", embedding_dimension=1536))
     out = r.json()
     emb = out["checks"]["embedding"]
-    assert out["ok"] is False and out["embedding_dimension"] == dim
-    assert emb["ok"] is False and emb["code"] == "EMBEDDING_DIMENSION_MISMATCH" and emb["dimension"] == dim
+    assert out["ok"] is False and out["embedding_dimension"] is None
+    assert emb["ok"] is False and emb["code"] == "EMBEDDING_DIMENSION_MISMATCH" and emb["dimension"] == dim and emb["native_dimension"] == dim
     assert str(dim) in emb["message"] and "1536" in emb["message"]
+    sent = [json.loads(c.request.content) for c in emb_route.calls]
+    assert [("dimensions" in s) for s in sent] == [False, True] and sent[1]["dimensions"] == 1536
 
 
 # ----------------------------------------------------------------------------------------------------- upstream errors
@@ -326,7 +330,7 @@ async def test_model_ids_are_trimmed(client):
 async def test_mock_all_ok(client):
     r = await client.post(URL, json=body(provider="mock", key="mock-valid-key", chat="mock-chat", emb="mock-embed"))
     out = r.json()
-    assert out["ok"] is True and out["embedding_dimension"] == 1536 and all(c["ok"] for c in out["checks"].values())
+    assert out["ok"] is True and out["embedding_dimension"] == 1536 and all(out["checks"][k]["ok"] for k in ("auth", "chat", "embedding"))
     r = await client.post(URL, json=body(provider="mock", key="mock-valid-key", chat="mock-chat-plain", emb="mock-embed"))
     assert r.json()["ok"] is True
 
@@ -345,7 +349,9 @@ async def test_mock_behaviours(client):
     assert out["checks"]["embedding"]["code"] == "MODEL_NOT_FOUND"
 
     out = await run(emb="mock-embed-3072")
-    assert out["checks"]["embedding"]["code"] == "EMBEDDING_DIMENSION_MISMATCH" and out["embedding_dimension"] == 3072 and "3072" in out["checks"]["embedding"]["message"]
+    assert out["checks"]["embedding"]["ok"] is True and out["embedding_dimension"] == 3072  # no size requested: the native size is used
+    out = await run(emb="mock-embed-3072", embedding_dimension=1536)
+    assert out["checks"]["embedding"]["code"] == "EMBEDDING_DIMENSION_MISMATCH" and out["embedding_dimension"] is None and "3072" in out["checks"]["embedding"]["message"]
 
     out = await run(emb="mock-embed-nan")
     assert out["checks"]["embedding"]["code"] == "PROVIDER_ERROR"
@@ -357,3 +363,158 @@ async def test_mock_is_not_validatable_when_disabled_or_in_production(pool):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://x", headers={"Authorization": f"Bearer {SERVICE_TOKEN}"}) as c:
             r = await c.post(URL, json=body(provider="mock", key="mock-valid-key", chat="mock-chat", emb="mock-embed"))
             assert r.status_code == 422 and r.json()["error"]["code"] == "VALIDATION"
+
+
+# ----------------------------------------------------------------------------------------- Increment 1: parameters + diagnostics
+from app.providers.openrouter import clear_public_cache  # noqa: E402
+
+PUBLIC_FREE = {"data": [{"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "name": "Nemotron (free)", "context_length": 1000000, "pricing": {"prompt": "0", "completion": "0"}, "architecture": {"output_modalities": ["text"]}, "supported_parameters": ["max_tokens", "seed", "temperature", "top_p"]}]}
+FREE_CHAT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+
+@pytest.fixture(autouse=True)
+def _clear_public_cache():
+    clear_public_cache()
+    yield
+    clear_public_cache()
+
+
+def _with_metadata(m, listing=PUBLIC_FREE):
+    m.get(f"{OR}/key").mock(return_value=httpx.Response(200, json={"data": {}}))
+    m.get(f"{OR}/models").mock(return_value=httpx.Response(200, json=listing))
+    m.post(f"{OR}/embeddings").mock(return_value=httpx.Response(200, json=embed_json(1, 1536)))
+
+
+async def test_unset_parameters_are_skipped_and_nothing_extra_is_sent(client):
+    with respx.mock as m:
+        chat, _ = mock_ok(m)
+        r = await client.post(URL, json=body(chat_params={}))
+    assert r.json()["checks"]["chat_params"]["skipped"] is True
+    assert chat.call_count == 1  # no second paid call when there is nothing to verify
+
+
+async def test_parameter_the_models_listing_does_not_include_is_refused_without_any_paid_call(client):
+    with respx.mock as m:
+        _with_metadata(m)
+        chat = m.post(f"{OR}/chat/completions").mock(return_value=httpx.Response(200, json=chat_json("OK")))
+        r = await client.post(URL, json=body(chat=FREE_CHAT, chat_params={"temperature": 0.3, "frequency_penalty": 0.5, "presence_penalty": 0.1}))
+    out = r.json()
+    cp = out["checks"]["chat_params"]
+    assert out["ok"] is False and cp["ok"] is False and cp["code"] == "PARAMETER_UNSUPPORTED"
+    assert cp["unsupported"] == ["frequency_penalty", "presence_penalty"]
+    assert "temperature" not in cp["message"] and "frequency_penalty" in cp["message"]
+    assert chat.call_count == 1  # only the availability check; the unsupported parameters were never sent
+    assert out["checks"]["chat"]["ok"] is True and out["checks"]["embedding"]["ok"] is True
+
+
+async def test_supported_parameters_are_verified_with_one_tiny_call_that_requires_them(client):
+    with respx.mock as m:
+        _with_metadata(m)
+        chat = m.post(f"{OR}/chat/completions").mock(return_value=httpx.Response(200, json=chat_json("OK")))
+        r = await client.post(URL, json=body(chat=FREE_CHAT, chat_params={"temperature": 0.2, "top_p": 0.9, "seed": 7, "max_output_tokens": 4000}))
+    out = r.json()
+    assert out["ok"] is True
+    assert out["checks"]["chat_params"] == {"ok": True, "latency_ms": out["checks"]["chat_params"]["latency_ms"], "verified": ["max_tokens", "seed", "temperature", "top_p"], "diagnostics": {"source": "metadata_and_live_call"}}
+    assert chat.call_count == 2
+    sent = json.loads(chat.calls.last.request.content)
+    assert sent["temperature"] == 0.2 and sent["top_p"] == 0.9 and sent["seed"] == 7
+    assert sent["max_tokens"] <= 8  # the test never spends the user's real limit
+    assert sent["provider"] == {"require_parameters": True}
+    first = json.loads(chat.calls[0].request.content)
+    assert "provider" not in first and "seed" not in first  # the availability check stays minimal
+
+
+async def test_without_metadata_the_live_call_decides_and_a_router_refusal_is_reported_as_unsupported_parameters(client):
+    with respx.mock as m:
+        _with_metadata(m, listing={"data": []})
+        calls = {"n": 0}
+
+        def respond(request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(200, json=chat_json("OK"))
+            return httpx.Response(404, json={"error": {"code": 404, "message": "No endpoints found that can handle the requested parameters"}})
+
+        m.post(f"{OR}/chat/completions").mock(side_effect=respond)
+        r = await client.post(URL, json=body(chat_params={"frequency_penalty": 1}))
+    cp = r.json()["checks"]["chat_params"]
+    assert cp["ok"] is False and cp["code"] == "PARAMETER_UNSUPPORTED" and cp["unsupported"] == ["frequency_penalty"]
+    assert cp["diagnostics"]["http_status"] == 404 and cp["diagnostics"]["endpoint"] == "POST /chat/completions"
+
+
+async def test_chat_params_are_skipped_when_the_chat_model_itself_fails(client):
+    with respx.mock as m:
+        _with_metadata(m)
+        m.post(f"{OR}/chat/completions").mock(return_value=httpx.Response(404, json={"error": {"code": 404, "message": "No endpoints found for x"}}))
+        r = await client.post(URL, json=body(chat_params={"temperature": 0.2}))
+    out = r.json()["checks"]
+    assert out["chat"]["code"] == "MODEL_NOT_FOUND" and out["chat_params"]["skipped"] is True
+
+
+@pytest.mark.parametrize("bad", [{"temperature": 2.5}, {"top_p": -0.1}, {"frequency_penalty": 3}, {"presence_penalty": -2.1}, {"seed": -1}, {"max_output_tokens": 0}, {"unknown": 1}])
+async def test_out_of_range_or_unknown_parameters_are_422(client, bad):
+    r = await client.post(URL, json=body(chat_params=bad))
+    assert r.status_code == 422 and CANARY_KEY not in r.text
+
+
+async def test_failures_carry_sanitised_diagnostics_but_never_upstream_text_or_the_key(client, caplog):
+    caplog.set_level(logging.INFO)
+    upstream = {"error": {"code": 400, "message": f"Provider returned error for key {CANARY_KEY} and prompt SECRET-PROMPT", "metadata": {"provider_name": "Nvidia", "raw": f"{CANARY_KEY} RAW BODY"}}}
+    with respx.mock as m:
+        m.get(f"{OR}/key").mock(return_value=httpx.Response(200, json={"data": {}}))
+        m.get(f"{OR}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+        m.post(f"{OR}/chat/completions").mock(return_value=httpx.Response(200, json=chat_json("OK")))
+        m.post(f"{OR}/embeddings").mock(return_value=httpx.Response(400, json=upstream))
+        r = await client.post(URL, json=body(emb="nvidia/nemotron-3.5-embed-1b:free"))
+    emb = r.json()["checks"]["embedding"]
+    assert emb["ok"] is False and emb["code"] == "PROVIDER_ERROR"
+    assert emb["diagnostics"] == {"endpoint": "POST /embeddings", "http_status": 400, "upstream_code": "400", "upstream_provider": "Nvidia"}
+    everything = r.text + caplog.text
+    assert CANARY_KEY not in everything and "SECRET-PROMPT" not in everything and "RAW BODY" not in everything
+    logged = [rec for rec in caplog.records if rec.getMessage() == "validate_check_failed"]
+    assert logged and logged[0].check == "embedding" and logged[0].http_status == 400 and logged[0].endpoint == "POST /embeddings"
+
+
+async def test_an_error_wrapped_in_http_200_is_classified_not_called_unexpected(client):
+    wrapped = {"error": {"code": 429, "message": "rate limited upstream", "metadata": {"provider_name": "Nvidia"}}}
+    with respx.mock as m:
+        m.get(f"{OR}/key").mock(return_value=httpx.Response(200, json={"data": {}}))
+        m.get(f"{OR}/models").mock(return_value=httpx.Response(200, json={"data": []}))
+        m.post(f"{OR}/chat/completions").mock(return_value=httpx.Response(200, json=chat_json("OK")))
+        m.post(f"{OR}/embeddings").mock(return_value=httpx.Response(200, json=wrapped))
+        r = await client.post(URL, json=body())
+    emb = r.json()["checks"]["embedding"]
+    assert emb["code"] == "PROVIDER_RATE_LIMITED" and emb["diagnostics"]["wrapped_in_http_200"] is True and emb["diagnostics"]["http_status"] == 429
+
+
+async def test_public_models_endpoint_is_keyless_cached_and_trimmed(client):
+    listing = {"data": [
+        {"id": "a/free-chat:free", "name": "Free chat", "context_length": 4096, "pricing": {"prompt": "0", "completion": "0"}, "architecture": {"output_modalities": ["text"]}, "supported_parameters": ["temperature", "BAD PARAM!", 5]},
+        {"id": "b/paid-chat", "pricing": {"prompt": "0.000001", "completion": "0.000002"}, "architecture": {"output_modalities": ["text"]}},
+        {"id": "c/embedder", "architecture": {"output_modalities": ["embeddings"]}},
+        {"id": "d/image-only", "architecture": {"output_modalities": ["image"]}},
+    ]}
+    with respx.mock as m:
+        route = m.get(f"{OR}/models").mock(return_value=httpx.Response(200, json=listing))
+        r1 = await client.get("/v1/providers/openrouter/public-models?kind=chat")
+        r2 = await client.get("/v1/providers/openrouter/public-models?kind=chat")
+        sent_auth = route.calls.last.request.headers.get("authorization")
+    out = r1.json()
+    assert [x["id"] for x in out["models"]] == ["a/free-chat:free", "b/paid-chat"]
+    assert out["models"][0] == {"id": "a/free-chat:free", "name": "Free chat", "context_length": 4096, "free": True, "supported_parameters": ["temperature"]}
+    assert out["models"][1]["free"] is False and out["models"][1]["supported_parameters"] is None
+    assert route.call_count == 1 and r2.json()["models"] == out["models"]  # cached
+    assert sent_auth is None  # keyless: no Authorization header at all
+
+
+async def test_public_models_for_a_provider_without_a_listing(client):
+    r = await client.get("/v1/providers/groq/public-models?kind=chat")
+    assert r.status_code == 200 and r.json()["available"] is False and r.json()["models"] == []
+    assert (await client.get("/v1/providers/openrouter/public-models?kind=bogus")).status_code == 422
+
+
+async def test_mock_parameter_behaviour(client):
+    ok = (await client.post(URL, json=body(provider="mock", key="mock-valid-key", chat="mock-chat", emb="mock-embed", chat_params={"frequency_penalty": 0.5, "seed": 1}))).json()
+    assert ok["checks"]["chat_params"]["ok"] is True
+    limited = (await client.post(URL, json=body(provider="mock", key="mock-valid-key", chat="mock-chat-limited", emb="mock-embed", chat_params={"frequency_penalty": 0.5, "seed": 1}))).json()
+    assert limited["ok"] is False and limited["checks"]["chat_params"]["unsupported"] == ["frequency_penalty"]

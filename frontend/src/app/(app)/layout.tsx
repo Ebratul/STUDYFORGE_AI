@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { AuthNotice } from "@/components/auth/auth-notice";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { requireMe } from "@/lib/server/backend";
 
@@ -7,6 +9,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const me = await requireMe();
   return (
     <AppShell user={me.user} unread={me.unread} themePreference={me.preference.theme}>
+      <Suspense><AuthNotice /></Suspense>
       {children}
     </AppShell>
   );

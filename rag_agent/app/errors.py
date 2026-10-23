@@ -21,9 +21,18 @@ class ErrorCode(StrEnum):
     PROVIDER_ERROR = "PROVIDER_ERROR"
     STRUCTURED_OUTPUT_FAILED = "STRUCTURED_OUTPUT_FAILED"
     EMBEDDING_DIMENSION_MISMATCH = "EMBEDDING_DIMENSION_MISMATCH"
+    EMBEDDING_DIMENSION_UNSUPPORTED = "EMBEDDING_DIMENSION_UNSUPPORTED"
     BUSY = "BUSY"
     GENERATION_FAILED = "GENERATION_FAILED"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    PARAMETER_UNSUPPORTED = "PARAMETER_UNSUPPORTED"
+    # Vector store (Pinecone) failures. Operator-facing: they say nothing about the user's own AI key.
+    VECTOR_STORE_UNAVAILABLE = "VECTOR_STORE_UNAVAILABLE"
+    VECTOR_STORE_RATE_LIMITED = "VECTOR_STORE_RATE_LIMITED"
+    VECTOR_STORE_AUTH = "VECTOR_STORE_AUTH"
+    VECTOR_STORE_ERROR = "VECTOR_STORE_ERROR"
+    VECTOR_DIMENSION_UNSUPPORTED = "VECTOR_DIMENSION_UNSUPPORTED"
+    VECTOR_STORE_SCHEMA_NOT_READY = "VECTOR_STORE_SCHEMA_NOT_READY"
     INTERNAL = "INTERNAL"
 
 
@@ -42,9 +51,17 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.PROVIDER_ERROR: 502,
     ErrorCode.STRUCTURED_OUTPUT_FAILED: 502,
     ErrorCode.EMBEDDING_DIMENSION_MISMATCH: 422,
+    ErrorCode.EMBEDDING_DIMENSION_UNSUPPORTED: 422,
     ErrorCode.BUSY: 429,
     ErrorCode.GENERATION_FAILED: 502,
     ErrorCode.FILE_TOO_LARGE: 413,
+    ErrorCode.PARAMETER_UNSUPPORTED: 422,
+    ErrorCode.VECTOR_STORE_UNAVAILABLE: 503,
+    ErrorCode.VECTOR_STORE_RATE_LIMITED: 429,
+    ErrorCode.VECTOR_STORE_AUTH: 502,
+    ErrorCode.VECTOR_STORE_ERROR: 502,
+    ErrorCode.VECTOR_DIMENSION_UNSUPPORTED: 422,
+    ErrorCode.VECTOR_STORE_SCHEMA_NOT_READY: 503,
     ErrorCode.INTERNAL: 500,
 }
 
@@ -63,10 +80,18 @@ SAFE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.QUOTA_EXCEEDED: "The AI provider reports that the quota or billing limit for this key has been reached.",
     ErrorCode.PROVIDER_ERROR: "The AI provider returned an error. Please try again.",
     ErrorCode.STRUCTURED_OUTPUT_FAILED: "The model did not return a valid structured answer.",
-    ErrorCode.EMBEDDING_DIMENSION_MISMATCH: "The selected embedding model does not produce 1536-dimensional vectors.",
+    ErrorCode.EMBEDDING_DIMENSION_MISMATCH: "The embedding model returned vectors of a different size than the configured embedding dimension.",
+    ErrorCode.EMBEDDING_DIMENSION_UNSUPPORTED: "The provider does not support the requested embedding dimension for this model.",
     ErrorCode.BUSY: "The service is busy. Please retry shortly.",
     ErrorCode.GENERATION_FAILED: "The questions could not be generated. Please try again.",
     ErrorCode.FILE_TOO_LARGE: "The uploaded file is too large.",
+    ErrorCode.PARAMETER_UNSUPPORTED: "The selected model does not accept one of the requested generation parameters.",
+    ErrorCode.VECTOR_STORE_UNAVAILABLE: "The document search index is temporarily unavailable. Please try again shortly.",
+    ErrorCode.VECTOR_STORE_RATE_LIMITED: "The document search index is busy. Please try again shortly.",
+    ErrorCode.VECTOR_STORE_AUTH: "The document search index rejected this server's credentials. Contact the administrator.",
+    ErrorCode.VECTOR_STORE_ERROR: "The document search index returned an error. Contact the administrator if this persists.",
+    ErrorCode.VECTOR_DIMENSION_UNSUPPORTED: "This installation's document search index does not support vectors of this size. Choose an embedding model/size it supports.",
+    ErrorCode.VECTOR_STORE_SCHEMA_NOT_READY: "The database has not been migrated for the configured vector store. Contact the administrator.",
     ErrorCode.INTERNAL: "An internal error occurred.",
 }
 
@@ -75,6 +100,8 @@ DEFAULT_RETRYABLE = {
     ErrorCode.PROVIDER_TIMEOUT,
     ErrorCode.PROVIDER_UNAVAILABLE,
     ErrorCode.BUSY,
+    ErrorCode.VECTOR_STORE_UNAVAILABLE,
+    ErrorCode.VECTOR_STORE_RATE_LIMITED,
 }
 
 
@@ -90,8 +117,11 @@ class AppError(Exception):
         retry_after_seconds: int | None = None,
         http_status: int | None = None,
         reason: str | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         self.code = ErrorCode(code)
+        # Sanitised facts about the failing upstream call (HTTP status, endpoint, allow-listed provider error code). Never bodies or keys.
+        self.diagnostics = diagnostics
         self.reason = reason  # GENERATION_FAILED only: INVALID_OUTPUT | NO_VALID_QUESTIONS | INSUFFICIENT_SOURCES | UNGROUNDED_OUTPUT
         self.message = message or SAFE_MESSAGES[self.code]
         self.retryable = (self.code in DEFAULT_RETRYABLE) if retryable is None else retryable

@@ -32,7 +32,6 @@ not end in `_rag_test`. Never run `prisma migrate` for this service: the schema 
 | `DATABASE_URL` | — | psycopg3 URL. Production role: `SELECT` (+`UPDATE ("processingVersion")`) on `"Document"`, `SELECT/INSERT/DELETE` on `"DocumentChunk"`. |
 | `RAG_AGENT_TOKEN` | — | Bearer token for `/v1/*`. Service refuses to start if unset or < 24 chars (the error never prints the value). |
 | `ALLOW_MOCK_PROVIDER` | `0` | `1` enables provider `mock`; ignored (provider unknown) when `APP_ENV=production`. |
-| `EMBEDDING_DIMENSIONS` | `1536` | Must be 1536 (`vector(1536)`). |
 | `MAX_UPLOAD_BYTES` / `MAX_PAGES` / `MAX_TEXT_CHARS` | 25 MiB / 500 / 2 000 000 | Ingestion limits. |
 | `PARSE_TIMEOUT_SECONDS` / `PARSE_MEMORY_MB` | 60 / 1024 | Wall clock and address-space limit of the parser worker. |
 | `CHUNK_TARGET_CHARS` / `CHUNK_OVERLAP_CHARS` | 3200 / 400 | Chunking. |
@@ -129,7 +128,7 @@ every provider path testable with real mocked HTTP. Revisit when respx supports 
   fake `[n] (` source headers inside text are neutralised; document names are sanitised. Permissions are enforced in SQL, not in prompts.
 * Output leak filter (both policies): any bound API key or the per-process canary blocks the answer. In GENERAL streaming the last
   `len(longest secret)-1` characters are held back so a secret split across deltas is never sent.
-* Retrieval SQL is parameterised, always owner-scoped on chunk **and** document, plus `processingVersion`, `READY`, `embeddingModel`. No ANN index (by design).
+* Retrieval SQL is parameterised, always owner-scoped on chunk **and** document, plus `processingVersion`, `READY`, and the embedding identity (`embeddingProvider`, `embeddingModel`, `embeddingDimension`), filtered before any distance operator so different vector lengths are never compared. No ANN index (by design; if one is ever added it must be one expression index per dimension).
 * Logs never contain request bodies, prompts, document text or exception messages (only exception type). uvicorn's own loggers are routed through the same redaction.
 
 ## LangSmith
@@ -146,7 +145,7 @@ configuration logic and hook wiring are unit-tested, with the network client rep
 | Base URL | `https://api.openai.com/v1` | `https://openrouter.ai/api/v1` | `https://api.groq.com/openai/v1` |
 | `GET /models` | `{data:[{id,object,created,owned_by,shutdown_date?}]}` — no context length, no capabilities | `{data:[{id,name,context_length,architecture{input/output_modalities},supported_parameters,pricing,…}]}`; **public** (does not validate a key) | `{data:[{id,object,created,owned_by,active,context_window,public_apps}]}` |
 | Credential check | `GET /models` | `GET /key` (authenticated; 401 on bad key), then `/models` for the count | `GET /models` |
-| Embeddings | yes: `POST /embeddings`, `dimensions` for `text-embedding-3-*` (small = 1536 native, large = 3072 → request `dimensions=1536`) | yes: `POST /embeddings` (+ `GET /embeddings/models`); `dimensions` documented | **no** embeddings API (not in API reference nor models page) |
+| Embeddings | yes: `POST /embeddings`, `dimensions` for `text-embedding-3-*` (small = 1536 native, large = 3072 native; both shortenable) | yes: `POST /embeddings` (+ `GET /embeddings/models`); `dimensions` documented | **no** embeddings API (not in API reference nor models page) |
 | Structured output | `json_schema` for gpt-4o-mini / gpt-4o-2024-08-06 and later | `structured_outputs` / `response_format` appear in each model's `supported_parameters` | `json_schema` documented for `openai/gpt-oss-20b`, `openai/gpt-oss-120b` (+ others named in docs); `json_object` on all |
 | Stream usage | `stream_options.include_usage` | usage sent once in the final chunk (no option) | `include_usage` only confirmed by third-party sources — unverified; usage degrades to `null` |
 | Headers | none | `HTTP-Referer`, `X-OpenRouter-Title`/`X-Title` **optional**; we send `X-Title` only | none |
@@ -199,4 +198,26 @@ See the final report of the implementation task; the authoritative list is kept 
 * Verification is a *grounding* check, not a quality check: the usefulness and tone of feedback from a real model are **not verified** (no live provider was ever called); tests use the mock provider and scripted fakes. The banned-phrase list is small and heuristic (EN/BN only).
 
 ### AI connection validation (`POST /v1/providers/validate`)
-Used by the backend's "AI connection" form (three inputs: API key, chat model id, embedding model id). It runs three minimal checks — auth, one 8-token chat completion, one embedding of a short sample — and reports each separately, including the **measured** embedding dimension (`embedding_dimension`); a model that does not return exactly 1536 finite numbers is rejected with `EMBEDDING_DIMENSION_MISMATCH`. The calls are real paid requests to the provider (two tiny ones); the key is only sent to the provider's own base URL (OpenRouter: `https://openrouter.ai/api/v1`) and never follows a redirect. Ingestion results now include `embedding_dimension`. See `CONTRACT.md` §11. Tests: `tests/test_provider_validate.py` (mocked HTTP only; no real key is used or needed).
+Used by the backend's "AI connection" form (three inputs: API key, chat model id, embedding model id). It runs three minimal checks — auth, one 8-token chat completion, one embedding of a short sample — and reports each separately, including the **measured** embedding dimension (`embedding_dimension`); the requested size (`embedding_dimension`, optional; default the model's native size) is verified with a live request and a model that does not return exactly that many finite numbers is rejected (`EMBEDDING_DIMENSION_MISMATCH` / `EMBEDDING_DIMENSION_UNSUPPORTED`); nothing is padded or truncated. The calls are real paid requests to the provider (two tiny ones); the key is only sent to the provider's own base URL (OpenRouter: `https://openrouter.ai/api/v1`) and never follows a redirect. Ingestion results now include `embedding_dimension`. See `CONTRACT.md` §11. Tests: `tests/test_provider_validate.py` (mocked HTTP only; no real key is used or needed).
+
+## Embedding dimensions and re-indexing
+
+The vector length is **not** a setting of this service (`EMBEDDING_DIMENSIONS` was removed; a leftover value in `.env` is ignored). The backend stores it per user and names it in every request (`embedding.dimension`, required, 8–4096; `embedding.request_dimensions` = the `dimensions` parameter to send, if any). `DocumentChunk.embedding` is an unconstrained `vector`; `embeddingDimension` is generated from it by the database. Retrieval only compares vectors of one identity (provider + model + dimension). `POST /v1/reindex` builds a second chunk set for a document under a new identity without touching the first, so the backend can switch over only after everything is verified. See `CONTRACT.md` §11.2 and `backend/docs/EMBEDDING_SETTINGS_SPEC.md`. Tests: `tests/test_embedding_dimensions.py`.
+
+## Vector storage (PostgreSQL and optional Pinecone)
+
+`VECTOR_STORE=pgvector` (default) | `dual` | `pinecone`; the backend must use the same value. `pgvector` needs none of the `PINECONE_*` settings and behaves as
+before. With `dual`/`pinecone` rag_agent additionally writes vectors to Pinecone (direct REST via httpx; the API key lives only here), validates every Pinecone
+candidate against PostgreSQL before use, and exposes `GET /v1/vectors/status` and `POST /v1/vectors/delete` (CONTRACT §12). Full design, index requirements, the
+migration, backfill and the staged rollout/rollback: [`backend/docs/VECTOR_STORE_SPEC.md`](../backend/docs/VECTOR_STORE_SPEC.md).
+
+```bash
+uv run python -m app.tools.pinecone_check                   # read-only: index dimension / metric match the configuration
+uv run python -m app.tools.backfill_pinecone                # DRY RUN: what would be copied from PostgreSQL (no Pinecone call)
+uv run python -m app.tools.backfill_pinecone --apply --limit-documents 5   # copy a small batch first; re-run to resume
+uv run python -m app.tools.reconcile_pinecone --owner USER  # dry run: vectors with no PostgreSQL row
+RUN_LIVE_PINECONE=1 uv run pytest tests/test_pinecone_live.py   # opt-in; disposable namespace; skipped otherwise
+```
+
+The test suite never contacts Pinecone: `tests/fake_pinecone.py` reproduces the REST API (including eventual consistency and scripted faults).
+

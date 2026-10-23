@@ -15,7 +15,7 @@ import { findNavItem, type NavSection } from "./nav-config";
 import { useT } from "@/lib/i18n/client";
 import { LanguageSwitcher } from "./language-switcher";
 
-export function Topbar({ sections, user, unread }: { sections: NavSection[]; user: { name: string; email: string }; unread: number }) {
+export function Topbar({ sections, user, unread }: { sections: NavSection[]; user: { name: string; email: string; image?: string | null }; unread: number }) {
   const pathname = usePathname();
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -56,7 +56,7 @@ export function Topbar({ sections, user, unread }: { sections: NavSection[]; use
           {unread > 0 && <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-card" aria-hidden />}
         </Link>
       </Button>
-      <div className="lg:hidden"><UserMenu name={user.name} email={user.email} variant="compact" /></div>
+      <div className="lg:hidden"><UserMenu name={user.name} email={user.email} image={user.image} variant="compact" /></div>
     </header>
   );
 }

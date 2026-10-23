@@ -18,6 +18,9 @@ const schema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
   BETTER_AUTH_SECRET: z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
   AUTH_REQUIRE_EMAIL_VERIFICATION: bool,
+  /** Google OAuth 2.0 web client. Server-side only; set both or neither (Google sign-in is hidden when unset). */
+  AUTH_GOOGLE_ID: z.string().min(10).optional(),
+  AUTH_GOOGLE_SECRET: z.string().min(10).optional(),
   SMTP_URL: z.string().url().optional(),
   EMAIL_FROM: z.string().min(3).default("StudyForge <no-reply@localhost>"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -31,11 +34,22 @@ const schema = z.object({
   CREDENTIAL_ENCRYPTION_KEY: z.string().min(1, "CREDENTIAL_ENCRYPTION_KEY is required"),
   /** Optional previous key(s), comma-separated, so keys can be rotated without re-encrypting immediately. */
   CREDENTIAL_ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
+  /**
+   * Deployment DEFAULT for the embedding dimension (docs/EMBEDDING_SETTINGS_SPEC.md §2). Optional. It only seeds a new embedding
+   * configuration whose dimension the user left blank; a dimension saved in the database always wins and is never changed by this value.
+   */
+  EMBEDDING_DIMENSIONS: z.coerce.number().int().min(8, "EMBEDDING_DIMENSIONS must be between 8 and 4096").max(4096, "EMBEDDING_DIMENSIONS must be between 8 and 4096").optional(),
+  /**
+   * Where document vectors live (docs/VECTOR_STORE_SPEC.md). MUST equal rag_agent's VECTOR_STORE.
+   *  pgvector (default) PostgreSQL only · dual: write both, serve PostgreSQL · pinecone: semantic search from Pinecone.
+   * The backend never holds Pinecone credentials; it only needs the mode, to queue vector cleanups and to check configurations.
+   */
+  VECTOR_STORE: z.enum(["pgvector", "dual", "pinecone"]).default("pgvector"),
   /** Offers the deterministic "mock" provider (tests/demos). Rejected in production. */
   ALLOW_MOCK_PROVIDER: bool,
 
   // --- storage ---
-  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  STORAGE_DRIVER: z.enum(["local", "s3", "cloudinary"]).default("local"),
   LOCAL_STORAGE_DIR: z.string().default("./storage"),
   S3_ENDPOINT: z.string().url().optional(),
   S3_REGION: z.string().default("auto"),
@@ -43,6 +57,16 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: bool,
+  /** Cloudinary (STORAGE_DRIVER=cloudinary). Server-side only: the API secret must never reach the frontend, API responses or logs. */
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_FOLDER: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/, "CLOUDINARY_FOLDER must be letters, digits, '_' or '-' separated by '/' (e.g. studyforge/documents)")
+    .default("studyforge/documents"),
+  /** Per-file cap of your Cloudinary plan (Free allows roughly 10 MB for raw files). Unset = Cloudinary enforces its own limit. */
+  CLOUDINARY_MAX_FILE_BYTES: z.coerce.number().int().min(1024).optional(),
 
   // --- upload limits (the single source of truth; the frontend reads them from /api/documents/limits) ---
   MAX_UPLOAD_BYTES: int(25 * MiB, 1024),
@@ -130,6 +154,11 @@ export class EnvError extends Error {
   }
 }
 
+/** True when a Google OAuth client is configured, i.e. "Continue with Google" is offered. */
+export function isGoogleConfigured(env: Pick<Env, "AUTH_GOOGLE_ID" | "AUTH_GOOGLE_SECRET"> = getEnv()): boolean {
+  return Boolean(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET);
+}
+
 export function decodeKey(b64: string): Buffer | null {
   try {
     const buf = Buffer.from(b64.trim(), "base64");
@@ -153,10 +182,16 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   for (const k of (env.CREDENTIAL_ENCRYPTION_KEY_PREVIOUS ?? "").split(",").filter(Boolean)) {
     if (!decodeKey(k)) extra.push("CREDENTIAL_ENCRYPTION_KEY_PREVIOUS: every entry must be 32 random bytes, base64-encoded");
   }
+  if (Boolean(env.AUTH_GOOGLE_ID) !== Boolean(env.AUTH_GOOGLE_SECRET)) extra.push("AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET: set both or neither");
   if (env.AUTH_REQUIRE_EMAIL_VERIFICATION && !env.SMTP_URL) extra.push("SMTP_URL: required when AUTH_REQUIRE_EMAIL_VERIFICATION=true");
   if (env.STORAGE_DRIVER === "s3") {
     for (const k of ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const) {
       if (!env[k]) extra.push(`${k}: required when STORAGE_DRIVER=s3`);
+    }
+  }
+  if (env.STORAGE_DRIVER === "cloudinary") {
+    for (const k of ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"] as const) {
+      if (!env[k]) extra.push(`${k}: required when STORAGE_DRIVER=cloudinary`);
     }
   }
   if (env.NODE_ENV === "production") {

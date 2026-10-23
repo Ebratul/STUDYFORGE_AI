@@ -30,7 +30,7 @@ async def chat_stream(body: ChatBody, request: Request):
     if total > settings.max_chat_chars:
         raise AppError(ErrorCode.VALIDATION, f"The conversation is too long (max {settings.max_chat_chars} characters).")
     request_id_var.set(body.request_id[:64])
-    ctx = make_context(settings, app.state.registry, app.state.pool, body)  # unknown provider -> 422 before streaming
+    ctx = make_context(settings, app.state.registry, app.state.pool, body, app.state.vectors)  # unknown provider -> 422 before streaming
 
     async def gen() -> AsyncIterator[bytes]:
         request_id_var.set(body.request_id[:64])
